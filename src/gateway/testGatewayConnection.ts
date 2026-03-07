@@ -73,9 +73,7 @@ export async function testGatewayConnection(
           password: input.password,
         });
 
-        if (payload?.nonce) {
-          params.nonce = payload.nonce;
-        }
+        // nonce belongs inside device{} for signed device-auth — browser UI has no key, skip it
 
         socket?.send(
           JSON.stringify({
