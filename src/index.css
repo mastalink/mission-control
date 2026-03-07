@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    background: #1a365d;
+    color: #f5f0e8;
+    overflow: hidden;
+  }
+}
+
+/* Office floor carpet texture */
+.office-carpet {
+  background: repeating-linear-gradient(
+    45deg,
+    #7a6845 0px,
+    #7a6845 2px,
+    #8b7355 2px,
+    #8b7355 4px
+  );
+}
+
+/* Glowing screen effect */
+@keyframes screen-glow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.3);
+  }
+}
+
+.screen-active {
+  animation: screen-glow 2s ease-in-out infinite;
+}
+
+/* Speech bubble animation */
+@keyframes bubble-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.speech-bubble {
+  animation: bubble-appear 0.3s ease-out;
+}
+
+/* Character idle bobbing */
+@keyframes idle-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+.character-idle {
+  animation: idle-bob 3s ease-in-out infinite;
+}
+
+/* Character thinking */
+@keyframes thinking-type {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-1deg);
+  }
+  75% {
+    transform: rotate(1deg);
+  }
+}
+
+.character-thinking {
+  animation: thinking-type 0.5s ease-in-out infinite;
+}
+
+/* Error shake */
+@keyframes error-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+.character-error {
+  animation: error-shake 0.5s ease-in-out;
+}
+
+/* Paper airplane message flow */
+@keyframes fly-message {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+/* Channel door pulse */
+@keyframes door-pulse {
+  0%,
+  100% {
+    stroke-opacity: 0.3;
+  }
+  50% {
+    stroke-opacity: 1;
+  }
+}
+
+.channel-active {
+  animation: door-pulse 1.5s ease-in-out infinite;
+}
+
+/* Status indicator */
+.status-dot {
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Hide scrollbar for tab overflow */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Mobile touch targets */
+@media (pointer: coarse) {
+  svg g[style*="cursor"] {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+}
