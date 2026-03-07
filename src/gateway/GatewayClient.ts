@@ -246,10 +246,7 @@ export class GatewayClient {
       password: this.opts.password,
     });
 
-    // Include nonce from connect.challenge if available
-    if (this.connectNonce) {
-      params.nonce = this.connectNonce;
-    }
+    // nonce belongs inside device{} for signed device-auth — browser UI has no key, skip it
 
     const timer = setTimeout(() => {
       this.pending.delete(id);

@@ -34,11 +34,11 @@ export function buildConnectRequestParams(input: GatewayConnectionInput): Record
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "openclaw-mission-control",
+      id: "openclaw-control-ui",
       displayName: "Dunder Mifflin Mission Control",
       version: "0.1.0",
       platform: "web",
-      mode: "webchat",
+      mode: "ui",
       instanceId: input.instanceId,
     },
     role: "operator",
