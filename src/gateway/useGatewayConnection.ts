@@ -4,9 +4,27 @@ import { setGatewayManager } from "./gatewayRef";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { useAgentStore } from "../store/useAgentStore";
 import { useChannelStore } from "../store/useChannelStore";
+import { useCharacterStore } from "../store/useCharacterStore";
 import { autoAssignCharacters } from "../characters/mapping";
 import { getCharacterById } from "../characters/registry";
 import { normalizeGatewayUrl } from "./connectionUtils";
+
+/** Re-apply character assignments for an instance, respecting user overrides. */
+export function applyCharacterAssignments(
+  instanceId: string,
+  agents: { id: string }[],
+  defaultId?: string,
+) {
+  const agentStore = useAgentStore.getState();
+  const overrides = useCharacterStore.getState().getOverridesForInstance(instanceId);
+  const assignments = autoAssignCharacters(agents, defaultId, overrides, instanceId);
+  for (const a of assignments) {
+    const char = getCharacterById(a.characterId);
+    if (char) {
+      agentStore.setCharacterForAgent(instanceId, a.agentId, a.characterId, char.defaultLocation, 0);
+    }
+  }
+}
 
 /**
  * React hook that manages the GatewayManager lifecycle,
@@ -29,25 +47,7 @@ export function useGatewayConnection() {
       onAgentsList: (instanceId, result) => {
         const agentStore = useAgentStore.getState();
         agentStore.setAgents(instanceId, result.agents, result.defaultId);
-        // Auto-assign characters
-        const assignments = autoAssignCharacters(
-          result.agents,
-          result.defaultId,
-          {}, // TODO: load user overrides from localStorage
-          instanceId,
-        );
-        for (const a of assignments) {
-          const char = getCharacterById(a.characterId);
-          if (char) {
-            agentStore.setCharacterForAgent(
-              instanceId,
-              a.agentId,
-              a.characterId,
-              char.defaultLocation,
-              0,
-            );
-          }
-        }
+        applyCharacterAssignments(instanceId, result.agents, result.defaultId);
       },
       onChannelsStatus: (instanceId, result) => {
         useChannelStore.getState().setChannels(instanceId, result);

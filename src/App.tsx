@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useGatewayConnection } from "./gateway/useGatewayConnection";
+import { setGatewayConnectFns } from "./gateway/gatewayRef";
 import { useUIStore } from "./store/useUIStore";
 import { useSoundEffects } from "./audio/useSoundEffects";
 
@@ -8,7 +9,7 @@ import { TopBar } from "./building/TopBar";
 import { Dashboard } from "./building/Dashboard";
 import { FloorPlanPage } from "./building/FloorPlanPage";
 import { EmployeeRoster } from "./building/EmployeeRoster";
-import { SabreTerminal } from "./building/SabreTerminal";
+import { GatewayTerminal } from "./building/GatewayTerminal";
 import { SplashScreen } from "./building/SplashScreen";
 import { Sidebar } from "./panels/Sidebar";
 import { AddInstanceDialog } from "./building/AddInstanceDialog";
@@ -16,6 +17,11 @@ import { AddInstanceDialog } from "./building/AddInstanceDialog";
 export function App() {
   const { connect, disconnect, reconnectSaved } = useGatewayConnection();
   useSoundEffects();
+
+  // Expose connect/disconnect to module-level callers (e.g. terminal)
+  useEffect(() => {
+    setGatewayConnectFns(connect, disconnect);
+  }, [connect, disconnect]);
 
   useEffect(() => {
     reconnectSaved();
@@ -41,7 +47,7 @@ export function App() {
           {activePage === "dashboard"  && <Dashboard onConnect={connect} />}
           {activePage === "floorplan"  && <FloorPlanPage />}
           {activePage === "roster"     && <EmployeeRoster />}
-          {activePage === "ops"        && <SabreTerminal />}
+          {activePage === "ops"        && <GatewayTerminal />}
 
           {/* Right side panel (agent detail, chat, etc.) */}
           <Sidebar />
