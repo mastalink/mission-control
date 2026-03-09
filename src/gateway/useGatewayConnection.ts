@@ -1,22 +1,38 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { GatewayManager, type InstanceConfig } from "./GatewayManager";
+import { normalizeGatewayUrl } from "./connectionUtils";
 import { setGatewayManager } from "./gatewayRef";
-import { useGatewayStore } from "../store/useGatewayStore";
-import { useAgentStore } from "../store/useAgentStore";
-import { useChannelStore } from "../store/useChannelStore";
-import { useOpsStore } from "../store/useOpsStore";
+import type { HealthStatusResult, SessionsListResult } from "./types";
 import { autoAssignCharacters } from "../characters/mapping";
 import { getCharacterById } from "../characters/registry";
-import { normalizeGatewayUrl } from "./connectionUtils";
-import type { HealthStatusResult, SessionsListResult } from "./types";
+import { useAgentStore } from "../store/useAgentStore";
+import { useChannelStore } from "../store/useChannelStore";
+import { useCharacterStore } from "../store/useCharacterStore";
+import { useGatewayStore } from "../store/useGatewayStore";
+import { useOpsStore } from "../store/useOpsStore";
 
-/**
- * React hook that manages the GatewayManager lifecycle,
- * wiring WebSocket events into Zustand stores.
- *
- * Uses getState() for all store actions to avoid subscribing
- * to state changes (we only need actions, not reactive state).
- */
+export function applyCharacterAssignments(
+  instanceId: string,
+  agents: { id: string }[],
+  defaultId?: string,
+) {
+  const agentStore = useAgentStore.getState();
+  const overrides = useCharacterStore.getState().getOverridesForInstance(instanceId);
+  const assignments = autoAssignCharacters(agents, defaultId, overrides, instanceId);
+
+  for (const assignment of assignments) {
+    const character = getCharacterById(assignment.characterId);
+    if (!character) continue;
+    agentStore.setCharacterForAgent(
+      instanceId,
+      assignment.agentId,
+      assignment.characterId,
+      character.defaultLocation,
+      0,
+    );
+  }
+}
+
 export function useGatewayConnection() {
   const managerRef = useRef<GatewayManager | null>(null);
 
@@ -37,30 +53,15 @@ export function useGatewayConnection() {
         });
       },
       onDisconnected: (instanceId, info) => {
-        useGatewayStore.getState().setDisconnected(instanceId, info.code !== 1000 ? info.reason : undefined);
+        useGatewayStore.getState().setDisconnected(
+          instanceId,
+          info.code !== 1000 ? info.reason : undefined,
+        );
       },
       onAgentsList: (instanceId, result) => {
         const agentStore = useAgentStore.getState();
         agentStore.setAgents(instanceId, result.agents, result.defaultId);
-        // Auto-assign characters
-        const assignments = autoAssignCharacters(
-          result.agents,
-          result.defaultId,
-          {}, // TODO: load user overrides from localStorage
-          instanceId,
-        );
-        for (const a of assignments) {
-          const char = getCharacterById(a.characterId);
-          if (char) {
-            agentStore.setCharacterForAgent(
-              instanceId,
-              a.agentId,
-              a.characterId,
-              char.defaultLocation,
-              0,
-            );
-          }
-        }
+        applyCharacterAssignments(instanceId, result.agents, result.defaultId);
       },
       onChannelsStatus: (instanceId, result) => {
         useChannelStore.getState().setChannels(instanceId, result);
@@ -118,53 +119,60 @@ export function useGatewayConnection() {
     };
   }, []);
 
-  /** Connect to a gateway and persist it for future sessions */
-  const connect = useCallback((config: InstanceConfig & { token?: string; password?: string; autoConnect?: boolean }) => {
-    const normalizedUrl = normalizeGatewayUrl(config.url);
-    const gwStore = useGatewayStore.getState();
-    gwStore.addInstance({ instanceId: config.instanceId, label: config.label, url: normalizedUrl });
-    gwStore.setConnecting(config.instanceId);
-    useOpsStore.getState().ensureInstance(config.instanceId);
-    // Persist this connection so it auto-reconnects on next load
-    gwStore.saveConnection({
-      instanceId: config.instanceId,
-      label: config.label,
-      url: normalizedUrl,
-      token: config.token,
-      autoConnect: config.autoConnect ?? true,
-    });
-    managerRef.current?.connect({ ...config, url: normalizedUrl });
-  }, []);
+  const connect = useCallback(
+    (config: InstanceConfig & { token?: string; password?: string; autoConnect?: boolean }) => {
+      const normalizedUrl = normalizeGatewayUrl(config.url);
+      const gatewayStore = useGatewayStore.getState();
 
-  /**
-   * Disconnect an instance.
-   * @param forget - if true, also removes from saved connections (won't auto-reconnect next session)
-   */
-  const disconnect = useCallback((instanceId: string, options?: { forget?: boolean }) => {
-    managerRef.current?.disconnect(instanceId);
-    cleanupInstanceState(instanceId);
-    if (options?.forget) {
-      useGatewayStore.getState().removeSavedConnection(instanceId);
-    }
-  }, [cleanupInstanceState]);
+      gatewayStore.addInstance({
+        instanceId: config.instanceId,
+        label: config.label,
+        url: normalizedUrl,
+      });
+      gatewayStore.setConnecting(config.instanceId);
+      useOpsStore.getState().ensureInstance(config.instanceId);
 
-  /**
-   * Reconnect all previously saved connections.
-   * Called on app startup so the dashboard auto-connects to known gateways.
-   */
+      gatewayStore.saveConnection({
+        instanceId: config.instanceId,
+        label: config.label,
+        url: normalizedUrl,
+        token: config.token,
+        autoConnect: config.autoConnect ?? true,
+      });
+
+      managerRef.current?.connect({ ...config, url: normalizedUrl });
+    },
+    [],
+  );
+
+  const disconnect = useCallback(
+    (instanceId: string, options?: { forget?: boolean }) => {
+      managerRef.current?.disconnect(instanceId);
+      cleanupInstanceState(instanceId);
+      if (options?.forget) {
+        useGatewayStore.getState().removeSavedConnection(instanceId);
+      }
+    },
+    [cleanupInstanceState],
+  );
+
   const reconnectSaved = useCallback(() => {
     const { savedConnections } = useGatewayStore.getState();
     if (savedConnections.length === 0) return;
 
-    for (const conn of savedConnections) {
-      // Respect per-connection auto-connect preference
-      if (conn.autoConnect === false) continue;
-      const gwStore = useGatewayStore.getState();
-      if (gwStore.instances[conn.instanceId]?.status === "connected") continue;
-      gwStore.addInstance({ instanceId: conn.instanceId, label: conn.label, url: conn.url });
-      gwStore.setConnecting(conn.instanceId);
-      useOpsStore.getState().ensureInstance(conn.instanceId);
-      managerRef.current?.connect(conn);
+    for (const connection of savedConnections) {
+      if (connection.autoConnect === false) continue;
+      const gatewayStore = useGatewayStore.getState();
+      if (gatewayStore.instances[connection.instanceId]?.status === "connected") continue;
+
+      gatewayStore.addInstance({
+        instanceId: connection.instanceId,
+        label: connection.label,
+        url: connection.url,
+      });
+      gatewayStore.setConnecting(connection.instanceId);
+      useOpsStore.getState().ensureInstance(connection.instanceId);
+      managerRef.current?.connect(connection);
     }
   }, []);
 
