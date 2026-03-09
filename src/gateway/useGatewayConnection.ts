@@ -61,6 +61,7 @@ export function useGatewayConnection() {
       onAgentsList: (instanceId, result) => {
         const agentStore = useAgentStore.getState();
         agentStore.setAgents(instanceId, result.agents, result.defaultId);
+        useGatewayStore.getState().setDefaultAgentId(instanceId, result.defaultId ?? null);
         applyCharacterAssignments(instanceId, result.agents, result.defaultId);
       },
       onChannelsStatus: (instanceId, result) => {

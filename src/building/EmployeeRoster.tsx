@@ -1,6 +1,7 @@
 import { useAgentStore } from "../store/useAgentStore";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { useUIStore } from "../store/useUIStore";
+import { OperatorGuide } from "./OperatorGuide";
 import { getCharacterById } from "../characters/registry";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -25,6 +26,7 @@ export function EmployeeRoster() {
   const agents = useAgentStore((s) => s.agents);
   const instances = useGatewayStore((s) => s.instances);
   const openPanel = useUIStore((s) => s.openPanel);
+  const openDesk = useUIStore((s) => s.openDesk);
   const toggleAddInstance = useUIStore((s) => s.toggleAddInstance);
 
   const allAgents = Object.entries(agents).flatMap(([instanceId, instAgents]) =>
@@ -55,14 +57,64 @@ export function EmployeeRoster() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-dunder font-bold text-dunder-paper">Employee Roster</h1>
-          <p className="text-sm text-dunder-carpet mt-1 font-dunder">Active Agents on Duty</p>
+          <p className="text-sm text-dunder-carpet mt-1 font-dunder">OpenClaw agents with Office character assignments</p>
         </div>
         <button
           onClick={toggleAddInstance}
           className="px-4 py-2 text-xs font-dunder text-dunder-paper bg-dunder-screen-off border border-dunder-carpet/30 rounded hover:bg-dunder-paper/10 transition-colors"
         >
-          + Add Agent
+          + Add Gateway
         </button>
+      </div>
+
+      <div className="mb-6">
+        <OperatorGuide
+          eyebrow="Roster Primer"
+          title="What you are looking at"
+          summary="The roster shows real agents from your connected gateways, but it presents them as Office employees when a character is assigned. The big name is the character. The system identity stays with the underlying agent."
+          terms={[
+            {
+              term: "OpenClaw Agent",
+              definition: "The real runtime worker loaded from a gateway. Its identity is preserved even when you give it an Office character.",
+            },
+            {
+              term: "Mission Control Character",
+              definition: "A visual and thematic role like Dwight or Pam. This affects the floor plan and roster presentation only.",
+            },
+          ]}
+          steps={[
+            {
+              title: "Connect or provision",
+              body: "Connected gateways contribute existing agents, and Gateway Workbench can provision new ones directly into that roster.",
+            },
+            {
+              title: "Assign an Office character",
+              body: "Open Settings and use Character Mapping to cast an agent as Dwight, Pam, Jim, or another employee.",
+            },
+            {
+              title: "Create work in Session Desk",
+              body: "Use Session Desk when you want to create a session, choose the agent that runs it, and select the model or channel routing.",
+            },
+          ]}
+          actions={(
+            <>
+              <button
+                type="button"
+                onClick={() => openPanel({ type: "settings" })}
+                className="rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/14"
+              >
+                Character Mapping
+              </button>
+              <button
+                type="button"
+                onClick={() => openDesk({ section: "sessions" })}
+                className="rounded-md border border-dunder-paper/35 bg-dunder-paper/12 px-3 py-2 text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/18"
+              >
+                Open Session Desk
+              </button>
+            </>
+          )}
+        />
       </div>
 
       {/* Agent grid */}
@@ -111,6 +163,9 @@ export function EmployeeRoster() {
                 </div>
                 <div className="text-[10px] text-dunder-carpet tracking-wider uppercase mt-0.5">
                   {char?.title ?? instanceLabel}
+                </div>
+                <div className="mt-1 text-[10px] font-mono text-dunder-wall">
+                  Agent {agent.name}
                 </div>
               </div>
 

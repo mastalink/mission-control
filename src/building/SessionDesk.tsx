@@ -1,7 +1,18 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { THE_OFFICE_CHARACTERS } from "../characters/registry";
 import { loadDemoData } from "../demo/loadDemo";
 import { getGatewayManager } from "../gateway/gatewayRef";
 import type { ChatHistoryMessage, SessionDetail, SessionEntry } from "../gateway/types";
+import { applyCharacterAssignments } from "../gateway/useGatewayConnection";
+import { useCharacterStore } from "../store/useCharacterStore";
+import { OperatorGuide, type GuideStep, type GuideTerm } from "./OperatorGuide";
+import {
+  buildProvisionedConfig,
+  emptyProvisioningDraft,
+  parseProvisioningBaseConfig,
+  slugAgentId,
+  type AgentProvisioningDraft,
+} from "./agentProvisioning";
 import { useAgentStore } from "../store/useAgentStore";
 import { useChannelStore } from "../store/useChannelStore";
 import { useGatewayStore } from "../store/useGatewayStore";
@@ -17,10 +28,162 @@ type SessionDraft = {
   groupActivation: string;
 };
 
+type ConfiguredAgentSummary = {
+  id: string;
+  name?: string;
+  workspace?: string;
+  agentDir?: string;
+  model?: string;
+  identityName?: string;
+  isDefault: boolean;
+};
+
+type RouteBindingSummary = {
+  agentId: string;
+  summary: string;
+};
+
 const THINKING_LEVELS = ["", "minimal", "low", "medium", "high"];
 const VERBOSE_LEVELS = ["", "brief", "normal", "detailed"];
 const SEND_POLICIES = ["", "inherit", "on", "off"];
 const GROUP_POLICIES = ["", "inherit", "always", "mentioned"];
+const CUSTOM_MODEL_VALUE = "__custom__";
+
+const DESK_TERMS: GuideTerm[] = [
+  {
+    term: "Gateway",
+    definition: "A live OpenClaw connection. Gateways expose the real agents, channels, models, approvals, and config you can operate here.",
+  },
+  {
+    term: "Agent",
+    definition: "A real OpenClaw worker on the gateway. Mission Control can provision one from Gateway Workbench, then route sessions to it from Session Desk.",
+  },
+  {
+    term: "Character",
+    definition: "An Office-themed skin inside Mission Control. Character mapping changes the face and desk location you see on the floor. It does not rename or recreate the underlying agent.",
+  },
+  {
+    term: "Session",
+    definition: "A work thread routed through a gateway. This is what you create here, then assign to an agent, model, and optional channel context.",
+  },
+];
+
+const DESK_STEPS: GuideStep[] = [
+  {
+    title: "Connect a gateway",
+    body: "The gateway loads its existing OpenClaw agents. If there is no gateway, there are no agents to assign or route.",
+  },
+  {
+    title: "Provision agents in Workbench",
+    body: "Use Gateway Workbench when you need to create a real OpenClaw agent. That writes gateway config and refreshes the live roster.",
+  },
+  {
+    title: "Create or open a session",
+    body: "Use Open Case File to create a session. That creates a work thread, not a new agent. Pick the agent you want to run it or leave it on the gateway default.",
+  },
+  {
+    title: "Cast the character",
+    body: "Open Character Mapping to decide which Office employee represents each agent on the floor plan and roster.",
+  },
+];
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === "object" && entry !== null && !Array.isArray(entry),
+  );
+}
+
+function defaultWorkspace(agentId: string): string {
+  return agentId === "main"
+    ? "~/.openclaw/workspace"
+    : `~/.openclaw/workspace-${agentId}`;
+}
+
+function defaultAgentDir(agentId: string): string {
+  return `~/.openclaw/agents/${agentId}/agent`;
+}
+
+function createProvisionDraft(agentId = ""): AgentProvisioningDraft {
+  const normalizedId = slugAgentId(agentId);
+  return {
+    ...emptyProvisioningDraft(),
+    agentId: normalizedId,
+    workspace: normalizedId ? defaultWorkspace(normalizedId) : "",
+    agentDir: normalizedId ? defaultAgentDir(normalizedId) : "",
+  };
+}
+
+function readModelLabel(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  return record && typeof record.primary === "string" ? record.primary : undefined;
+}
+
+function modelOptionLabel(model: { ref: string; label?: string; alias?: string; provider?: string }): string {
+  const parts = [model.label ?? model.alias ?? model.ref];
+  if (model.provider && model.provider !== model.ref) {
+    parts.push(model.provider);
+  }
+  if ((model.label ?? model.alias) && model.ref !== (model.label ?? model.alias)) {
+    parts.push(model.ref);
+  }
+  return parts.join(" · ");
+}
+
+function extractConfiguredAgents(config: Record<string, unknown> | null): ConfiguredAgentSummary[] {
+  const agentsRoot = asRecord(config?.agents);
+  const entries = asRecordArray(agentsRoot?.list);
+  return entries.map((entry) => {
+    const identity = asRecord(entry.identity);
+    return {
+      id: typeof entry.id === "string" ? entry.id : "unknown",
+      name: typeof entry.name === "string" ? entry.name : undefined,
+      workspace: typeof entry.workspace === "string" ? entry.workspace : undefined,
+      agentDir: typeof entry.agentDir === "string" ? entry.agentDir : undefined,
+      model: readModelLabel(entry.model),
+      identityName: typeof identity?.name === "string" ? identity.name : undefined,
+      isDefault: entry.default === true,
+    };
+  });
+}
+
+function extractRouteBindings(config: Record<string, unknown> | null): RouteBindingSummary[] {
+  const bindings = asRecordArray(config?.bindings);
+  const routes: RouteBindingSummary[] = [];
+  for (const entry of bindings) {
+    const match = asRecord(entry.match);
+    if (!match || typeof entry.agentId !== "string" || typeof match.channel !== "string") {
+      continue;
+    }
+    if (entry.type && entry.type !== "route") {
+      continue;
+    }
+    const bits = [match.channel];
+    if (typeof match.accountId === "string") bits.push(`acct:${match.accountId}`);
+    const peer = asRecord(match.peer);
+    if (peer && typeof peer.kind === "string" && typeof peer.id === "string") {
+      bits.push(`peer:${peer.kind}/${peer.id}`);
+    }
+    if (typeof match.guildId === "string") bits.push(`guild:${match.guildId}`);
+    if (typeof match.teamId === "string") bits.push(`team:${match.teamId}`);
+    if (Array.isArray(match.roles) && match.roles.length > 0) {
+      bits.push(`roles:${match.roles.join(",")}`);
+    }
+    routes.push({
+      agentId: entry.agentId,
+      summary: bits.join(" · "),
+    });
+  }
+  return routes;
+}
 
 function formatRelativeTime(ts?: number): string {
   if (!ts) return "No recent traffic";
@@ -139,6 +302,7 @@ export function SessionDesk() {
   const channelsByInstance = useChannelStore((state) => state.channels);
   const deskFocus = useUIStore((state) => state.deskFocus);
   const setDeskFocus = useUIStore((state) => state.setDeskFocus);
+  const openPanel = useUIStore((state) => state.openPanel);
   const toggleAddInstance = useUIStore((state) => state.toggleAddInstance);
 
   const opsInstances = useOpsStore((state) => state.instances);
@@ -194,6 +358,8 @@ export function SessionDesk() {
   const [handoffGatewayId, setHandoffGatewayId] = useState("");
   const [handoffAgentId, setHandoffAgentId] = useState("main");
   const [handoffNote, setHandoffNote] = useState("");
+  const [agentProvisionDrafts, setAgentProvisionDrafts] = useState<Record<string, AgentProvisioningDraft>>({});
+  const [customProvisionModelByInstance, setCustomProvisionModelByInstance] = useState<Record<string, boolean>>({});
   const [sessionDraft, setSessionDraft] = useState<SessionDraft>({
     label: "",
     model: "",
@@ -202,6 +368,46 @@ export function SessionDesk() {
     sendPolicy: "",
     groupActivation: "",
   });
+
+  const provisionDraft = currentInstanceId
+    ? (agentProvisionDrafts[currentInstanceId] ?? createProvisionDraft())
+    : createProvisionDraft();
+  let configRecord: Record<string, unknown> | null = null;
+  try {
+    configRecord = parseProvisioningBaseConfig({
+      rawText: currentOps?.configDraft?.rawText,
+      isDirty: currentOps?.configDraft?.dirty,
+      fallbackConfig: asRecord(currentOps?.config?.config) ?? undefined,
+    });
+  } catch {
+    configRecord = asRecord(currentOps?.config?.config);
+  }
+  const configuredAgents = extractConfiguredAgents(configRecord);
+  const configuredBindings = extractRouteBindings(configRecord);
+  const runtimeAgentIds = new Set(currentAgents.map((agent) => agent.agentId));
+
+  function setProvisionDraft(patch: Partial<AgentProvisioningDraft>) {
+    if (!currentInstanceId) return;
+    setAgentProvisionDrafts((state) => ({
+      ...state,
+      [currentInstanceId]: {
+        ...(state[currentInstanceId] ?? createProvisionDraft()),
+        ...patch,
+      },
+    }));
+  }
+
+  function resetProvisionDraft(agentId = "") {
+    if (!currentInstanceId) return;
+    setAgentProvisionDrafts((state) => ({
+      ...state,
+      [currentInstanceId]: createProvisionDraft(agentId),
+    }));
+    setCustomProvisionModelByInstance((state) => ({
+      ...state,
+      [currentInstanceId]: false,
+    }));
+  }
 
   const filteredSessions = (currentOps?.sessions ?? []).filter((session) => {
     const agentId = sessionAgentId(session.key, defaultAgentId);
@@ -397,6 +603,147 @@ export function SessionDesk() {
     setStatusMessage("Routing profile saved locally.");
   }
 
+  function buildProvisioningTarget(): {
+    agentId: string;
+    nextConfig: Record<string, unknown>;
+    patch: Record<string, unknown>;
+    warnings: string[];
+  } {
+    if (!currentInstanceId || !currentOps?.configDraft) {
+      throw new Error("Load a gateway config before provisioning an agent.");
+    }
+
+    const agentId = slugAgentId(provisionDraft.agentId);
+    if (!agentId) {
+      throw new Error("Agent Id is required.");
+    }
+
+    const baseConfig = parseProvisioningBaseConfig({
+      rawText: currentOps.configDraft.rawText,
+      isDirty: currentOps.configDraft.dirty,
+      fallbackConfig: asRecord(currentOps.config?.config) ?? undefined,
+    });
+    const result = buildProvisionedConfig(baseConfig, {
+      ...provisionDraft,
+      agentId,
+      workspace: provisionDraft.workspace.trim() || defaultWorkspace(agentId),
+      agentDir: provisionDraft.agentDir.trim() || defaultAgentDir(agentId),
+      setAsDefault:
+        provisionDraft.setAsDefault ||
+        extractConfiguredAgents(baseConfig).length === 0,
+    });
+
+    const nextConfig = result.config;
+    const patch: Record<string, unknown> = {
+      agents: asRecord(nextConfig.agents) ?? {},
+    };
+    if (provisionDraft.bindingChannel.trim()) {
+      patch.bindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : [];
+    }
+
+    return {
+      agentId,
+      nextConfig,
+      patch,
+      warnings: result.warnings,
+    };
+  }
+
+  async function stageProvisioningDraft() {
+    if (!currentInstanceId) return;
+    try {
+      const { agentId, nextConfig, warnings } = buildProvisioningTarget();
+      setConfigDraftError(currentInstanceId, null);
+      setConfigDraftText(currentInstanceId, JSON.stringify(nextConfig, null, 2));
+      setStatusMessage(
+        warnings.length > 0
+          ? `Staged agent ${agentId} in the config draft. ${warnings.join(" ")}`
+          : `Staged agent ${agentId} in the config draft.`,
+      );
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to stage the provisioning draft.");
+    }
+  }
+
+  function handleProvisionIdChange(value: string) {
+    const normalized = slugAgentId(value);
+    const nextPatch: Partial<AgentProvisioningDraft> = { agentId: normalized };
+    if (!provisionDraft.workspace || provisionDraft.workspace === defaultWorkspace(provisionDraft.agentId || "draft")) {
+      nextPatch.workspace = normalized ? defaultWorkspace(normalized) : "";
+    }
+    if (!provisionDraft.agentDir || provisionDraft.agentDir === defaultAgentDir(provisionDraft.agentId || "draft")) {
+      nextPatch.agentDir = normalized ? defaultAgentDir(normalized) : "";
+    }
+    setProvisionDraft(nextPatch);
+  }
+
+  async function provisionAgent() {
+    if (!currentInstanceId || !currentOps?.configDraft) return;
+    const client = getGatewayManager()?.getClient(currentInstanceId);
+    if (!client) return;
+
+    let agentId = "";
+    let nextConfig: Record<string, unknown> = {};
+    let patch: Record<string, unknown> = {};
+    let warnings: string[] = [];
+    try {
+      ({ agentId, nextConfig, patch, warnings } = buildProvisioningTarget());
+    } catch (error) {
+      return setErrorMessage(
+        error instanceof Error ? error.message : "Failed to build the provisioning draft.",
+      );
+    }
+
+    await runAction("provision-agent", async () => {
+      setConfigDraftError(currentInstanceId, null);
+      const note = workbenchNote.trim() || `Provision agent ${agentId}`;
+      const nextRawText = JSON.stringify(nextConfig, null, 2);
+      setConfigDraftText(currentInstanceId, nextRawText);
+
+      if (canUse(currentMethods, "config.patch")) {
+        await client.patchConfig({
+          raw: JSON.stringify(patch, null, 2),
+          baseHash: currentOps.configDraft?.baseHash,
+          note,
+        });
+      } else if (canUse(currentMethods, "config.apply")) {
+        await client.applyConfig({
+          raw: nextRawText,
+          baseHash: currentOps.configDraft?.baseHash,
+          note,
+        });
+      } else {
+        throw new Error("This gateway does not expose config.patch or config.apply.");
+      }
+
+      const snapshot = await client.fetchConfig();
+      setConfigDraftApplied(currentInstanceId, snapshot);
+
+      if (provisionDraft.characterId) {
+        useCharacterStore.getState().setOverride(currentInstanceId, agentId, provisionDraft.characterId);
+      }
+      if (canUse(currentMethods, "agents.list")) {
+        const result = await client.fetchAgentsList();
+        useGatewayStore.getState().setDefaultAgentId(currentInstanceId, result.defaultId ?? null);
+        useAgentStore.getState().setAgents(currentInstanceId, result.agents, result.defaultId);
+        applyCharacterAssignments(currentInstanceId, result.agents, result.defaultId);
+      }
+      if (provisionDraft.bindingChannel.trim() && canUse(currentMethods, "channels.status")) {
+        const channels = await client.fetchChannelsStatus();
+        useChannelStore.getState().setChannels(currentInstanceId, channels);
+      }
+      await refreshDesk(currentInstanceId);
+
+      resetProvisionDraft();
+      setStatusMessage(
+        warnings.length > 0
+          ? `Provisioned agent ${agentId}. ${warnings.join(" ")}`
+          : `Provisioned agent ${agentId}.`,
+      );
+    });
+  }
+
   async function resolveApproval(approvalId: string, decision: "allow-once" | "deny") {
     if (!currentInstanceId) return;
     const client = getGatewayManager()?.getClient(currentInstanceId);
@@ -470,6 +817,22 @@ export function SessionDesk() {
   }
 
   const models = currentOps?.models?.models ?? [];
+  const modelRefs = currentOps?.models?.refs ?? [];
+  const knownProvisionModels = Array.from(
+    new Map(
+      [
+        ...models.map((model) => [model.ref, model] as const),
+        ...modelRefs.map((ref) => [ref, { ref }] as const),
+      ],
+    ).values(),
+  );
+  const knownProvisionModelRefs = new Set(knownProvisionModels.map((model) => model.ref));
+  const usesUnknownProvisionModel =
+    provisionDraft.modelPrimary.trim().length > 0 &&
+    !knownProvisionModelRefs.has(provisionDraft.modelPrimary.trim());
+  const customProvisionModelOpen = currentInstanceId
+    ? (customProvisionModelByInstance[currentInstanceId] ?? false) || usesUnknownProvisionModel
+    : usesUnknownProvisionModel;
   const configDiff = diffPreview(currentOps?.config?.raw ?? JSON.stringify(currentOps?.config?.config ?? {}, null, 2), currentOps?.configDraft?.rawText ?? "");
   const noGatewaysView = (
     <div className="office-carpet flex h-full items-center justify-center p-6">
@@ -524,10 +887,13 @@ export function SessionDesk() {
         "Open Case File",
         "Create",
         <div className="space-y-3 px-4 py-4">
+          <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-3 py-3 text-sm leading-6 text-dunder-wall">
+            Creating a case file opens a session. It does not create a new agent. Pick which existing gateway agent should run the work, then choose a model override only if you need one.
+          </div>
           {field("Label", <input value={createLabel} onChange={(event) => setCreateLabel(event.target.value)} placeholder="Regional inventory follow-up" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
-          {field("Agent", <select value={createAgentId} onChange={(event) => setCreateAgentId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="main">Gateway Default</option>{currentAgents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.name}</option>)}</select>)}
+          {field("Assigned Agent", <select value={createAgentId} onChange={(event) => setCreateAgentId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="main">Gateway Default Agent</option>{currentAgents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.name}</option>)}</select>)}
           {field("Model", <select value={createModel} onChange={(event) => setCreateModel(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Use gateway/session default model</option>{models.map((model) => <option key={model.ref} value={model.ref}>{model.label ?? model.alias ?? model.ref}</option>)}</select>)}
-          {field("Channel", <select value={createChannelId} onChange={(event) => setCreateChannelId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">No channel pin</option>{currentChannels.map((channel) => <option key={channel.channelId} value={channel.channelId}>{channel.label}</option>)}</select>)}
+          {field("Pinned Channel", <select value={createChannelId} onChange={(event) => setCreateChannelId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">No channel pin</option>{currentChannels.map((channel) => <option key={channel.channelId} value={channel.channelId}>{channel.label}</option>)}</select>)}
           <button type="button" onClick={() => void createSession()} disabled={busyAction === "create-session"} className={`w-full ${buttonClasses("primary")}`}>{busyAction === "create-session" ? "Opening..." : "Create Session"}</button>
         </div>,
       )}
@@ -626,6 +992,186 @@ export function SessionDesk() {
     "Config Draft",
     <div className="space-y-3 px-4 py-4">
       {field("Workbench Note", <input value={workbenchNote} onChange={(event) => setWorkbenchNote(event.target.value)} placeholder="Document why this change exists." className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+      <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="space-y-3 rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 p-4">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-dunder-carpet">
+              Agent Provisioning
+            </div>
+            <h3 className="mt-2 font-dunder text-lg font-bold text-dunder-paper">
+              Create a real OpenClaw agent
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-dunder-wall">
+              This writes a new entry into <span className="font-mono text-xs">agents.list</span> and,
+              if you provide a channel, a route binding into <span className="font-mono text-xs">bindings</span>.
+              The gateway hot-applies agent and binding changes when supported.
+            </p>
+          </div>
+          <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-blue/40 px-3 py-3 text-sm leading-6 text-dunder-wall">
+            Create the real OpenClaw agent here, then use Character Mapping only if you want to cast it as Dwight, Pam, or someone else in Mission Control. If the raw draft below contains custom JSON5 edits, this form can only proceed once that draft is back to strict JSON or reverted.
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {field("Agent Id", <input value={provisionDraft.agentId} onChange={(event) => handleProvisionIdChange(event.target.value)} placeholder="workspace-home" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Display Name", <input value={provisionDraft.name} onChange={(event) => setProvisionDraft({ name: event.target.value })} placeholder="Workspace Home" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Workspace", <input value={provisionDraft.workspace} onChange={(event) => setProvisionDraft({ workspace: event.target.value })} placeholder="~/.openclaw/workspace-workspace-home" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Agent Dir", <input value={provisionDraft.agentDir} onChange={(event) => setProvisionDraft({ agentDir: event.target.value })} placeholder="~/.openclaw/agents/workspace-home/agent" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field(
+              "Primary Model",
+              knownProvisionModels.length > 0 ? (
+                <div className="space-y-2">
+                  <select
+                    value={customProvisionModelOpen ? CUSTOM_MODEL_VALUE : provisionDraft.modelPrimary}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === CUSTOM_MODEL_VALUE) {
+                        if (currentInstanceId) {
+                          setCustomProvisionModelByInstance((state) => ({
+                            ...state,
+                            [currentInstanceId]: true,
+                          }));
+                        }
+                        return;
+                      }
+                      if (currentInstanceId) {
+                        setCustomProvisionModelByInstance((state) => ({
+                          ...state,
+                          [currentInstanceId]: false,
+                        }));
+                      }
+                      setProvisionDraft({ modelPrimary: value });
+                    }}
+                    className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"
+                  >
+                    <option value="">Gateway default model</option>
+                    {knownProvisionModels.map((model) => (
+                      <option key={model.ref} value={model.ref}>
+                        {modelOptionLabel(model)}
+                      </option>
+                    ))}
+                    <option value={CUSTOM_MODEL_VALUE}>Custom model ref...</option>
+                  </select>
+                  {!customProvisionModelOpen ? (
+                    <div className="text-[11px] text-dunder-wall">
+                      Gateway catalog loaded from <span className="font-mono text-xs">models.list</span>.
+                    </div>
+                  ) : null}
+                  {customProvisionModelOpen ? (
+                    <input
+                      value={provisionDraft.modelPrimary}
+                      onChange={(event) => setProvisionDraft({ modelPrimary: event.target.value })}
+                      placeholder="custom/provider-model"
+                      className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-blue/40 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall"
+                    />
+                  ) : null}
+                </div>
+              ) : (
+                <input
+                  value={provisionDraft.modelPrimary}
+                  onChange={(event) => setProvisionDraft({ modelPrimary: event.target.value })}
+                  placeholder="openai/gpt-5"
+                  className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall"
+                />
+              ),
+            )}
+            {field("Fallback Models", <input value={provisionDraft.modelFallbacks} onChange={(event) => setProvisionDraft({ modelFallbacks: event.target.value })} placeholder="anthropic/claude-sonnet-4, openai/gpt-4.1" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {field("Identity Name", <input value={provisionDraft.identityName} onChange={(event) => setProvisionDraft({ identityName: event.target.value })} placeholder="Workspace Home" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Identity Theme", <input value={provisionDraft.identityTheme} onChange={(event) => setProvisionDraft({ identityTheme: event.target.value })} placeholder="dunder" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Identity Emoji", <input value={provisionDraft.identityEmoji} onChange={(event) => setProvisionDraft({ identityEmoji: event.target.value })} placeholder="🏢" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Avatar", <input value={provisionDraft.identityAvatar} onChange={(event) => setProvisionDraft({ identityAvatar: event.target.value })} placeholder="https://..." className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          </div>
+          {field("Mention Patterns", <input value={provisionDraft.mentionPatterns} onChange={(event) => setProvisionDraft({ mentionPatterns: event.target.value })} placeholder="@workspace, workspace home" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          <div className="grid gap-3 md:grid-cols-3">
+            {field("Sandbox Mode", <select value={provisionDraft.sandboxMode} onChange={(event) => setProvisionDraft({ sandboxMode: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Gateway default</option><option value="danger-full-access">danger-full-access</option><option value="workspace-write">workspace-write</option><option value="read-only">read-only</option></select>)}
+            {field("Sandbox Scope", <select value={provisionDraft.sandboxScope} onChange={(event) => setProvisionDraft({ sandboxScope: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Gateway default</option><option value="agent">agent</option><option value="session">session</option></select>)}
+            {field("Workspace Access", <select value={provisionDraft.workspaceAccess} onChange={(event) => setProvisionDraft({ workspaceAccess: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Gateway default</option><option value="read-write">read-write</option><option value="read-only">read-only</option><option value="none">none</option></select>)}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {field("Tool Profile", <input value={provisionDraft.toolProfile} onChange={(event) => setProvisionDraft({ toolProfile: event.target.value })} placeholder="coding" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Allow Tools", <input value={provisionDraft.toolAllow} onChange={(event) => setProvisionDraft({ toolAllow: event.target.value })} placeholder="shell, search, fetch" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            {field("Deny Tools", <input value={provisionDraft.toolDeny} onChange={(event) => setProvisionDraft({ toolDeny: event.target.value })} placeholder="browser" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {field("Office Character", <select value={provisionDraft.characterId} onChange={(event) => setProvisionDraft({ characterId: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">No Mission Control override</option>{THE_OFFICE_CHARACTERS.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}</select>)}
+            <label className="flex items-center gap-3 rounded-lg border border-dunder-carpet/20 bg-dunder-blue/40 px-3 py-3">
+              <input type="checkbox" checked={provisionDraft.setAsDefault} onChange={(event) => setProvisionDraft({ setAsDefault: event.target.checked })} className="h-4 w-4 rounded border border-dunder-carpet/30 bg-dunder-paper/10 accent-dunder-screen-on" />
+              <span className="text-sm text-dunder-paper">Make this the default agent on the gateway</span>
+            </label>
+          </div>
+          <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-blue/40 p-3">
+            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-dunder-carpet">
+              Optional Binding
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {field("Channel", <input value={provisionDraft.bindingChannel} onChange={(event) => setProvisionDraft({ bindingChannel: event.target.value })} placeholder={currentChannels[0]?.channelId ?? "whatsapp"} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+              {field("Account Id", <input value={provisionDraft.bindingAccountId} onChange={(event) => setProvisionDraft({ bindingAccountId: event.target.value })} placeholder="default" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+              {field("Peer Kind", <select value={provisionDraft.bindingPeerKind} onChange={(event) => setProvisionDraft({ bindingPeerKind: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Any peer</option><option value="direct">direct</option><option value="group">group</option><option value="channel">channel</option></select>)}
+              {field("Peer Id", <input value={provisionDraft.bindingPeerId} onChange={(event) => setProvisionDraft({ bindingPeerId: event.target.value })} placeholder="120363..." className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+              {field("Guild Id", <input value={provisionDraft.bindingGuildId} onChange={(event) => setProvisionDraft({ bindingGuildId: event.target.value })} placeholder="discord guild" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+              {field("Team Id", <input value={provisionDraft.bindingTeamId} onChange={(event) => setProvisionDraft({ bindingTeamId: event.target.value })} placeholder="slack team" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+            </div>
+            {field("Binding Roles", <input value={provisionDraft.bindingRoles} onChange={(event) => setProvisionDraft({ bindingRoles: event.target.value })} placeholder="ops, incident-response" className="mt-3 w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          </div>
+          {field("Advanced Overrides (JSON)", <textarea value={provisionDraft.extraJson} onChange={(event) => setProvisionDraft({ extraJson: event.target.value })} placeholder={'{\n  "subagents": { "allowAgents": ["reviewer"] }\n}'} className="min-h-28 w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-3 font-mono text-xs text-dunder-paper outline-none focus:border-dunder-wall" />)}
+          <div className="text-xs text-dunder-wall">
+            Advanced overrides are merged last. Use them for config fields not covered by the simple form.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void stageProvisioningDraft()} disabled={!currentOps?.configDraft || busyAction === "provision-agent"} className={buttonClasses()}>
+              Stage In Draft
+            </button>
+            <button type="button" onClick={() => void provisionAgent()} disabled={!currentOps?.configDraft || busyAction === "provision-agent"} className={buttonClasses("primary")}>
+              {busyAction === "provision-agent" ? "Provisioning..." : "Provision Agent"}
+            </button>
+            <button type="button" onClick={() => resetProvisionDraft()} className={buttonClasses()}>
+              Reset Draft
+            </button>
+          </div>
+        </div>
+        <div className="space-y-3 rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-dunder-carpet">
+                Configured Agents
+              </div>
+              <h3 className="mt-2 font-dunder text-lg font-bold text-dunder-paper">
+                Gateway roster from config
+              </h3>
+            </div>
+            {statusChip(`${configuredAgents.length} configured`, "neutral")}
+          </div>
+          <div className="space-y-3">
+            {configuredAgents.map((agent) => (
+              <div key={agent.id} className="rounded-lg border border-dunder-carpet/20 bg-dunder-blue/40 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-dunder text-lg font-bold text-dunder-paper">
+                      {agent.identityName ?? agent.name ?? agent.id}
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-dunder-carpet">
+                      {agent.id}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {agent.isDefault ? statusChip("default", "good") : null}
+                    {runtimeAgentIds.has(agent.id) ? statusChip("live", "live") : statusChip("config only", "warn")}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs text-dunder-wall md:grid-cols-2">
+                  <div>workspace {agent.workspace ?? "OpenClaw default"}</div>
+                  <div>agentDir {agent.agentDir ?? "OpenClaw default"}</div>
+                  <div>model {agent.model ?? "gateway default"}</div>
+                  <div>
+                    binding {configuredBindings.filter((binding) => binding.agentId === agent.id).map((binding) => binding.summary).join(", ") || "none"}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {configuredAgents.length === 0 ? <div className="rounded-lg border border-dashed border-dunder-carpet/20 px-3 py-4 text-sm text-dunder-wall">No agents are configured yet. Provision the first one here.</div> : null}
+          </div>
+        </div>
+      </div>
       <textarea value={currentOps?.configDraft?.rawText ?? ""} onChange={(event) => currentInstanceId && setConfigDraftText(currentInstanceId, event.target.value)} className="min-h-[360px] w-full rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-4 py-4 font-mono text-xs text-dunder-paper outline-none focus:border-dunder-wall" />
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => void refreshDesk(currentInstanceId)} className={buttonClasses()}>Reload</button>
@@ -694,14 +1240,14 @@ export function SessionDesk() {
     </div>,
   );
   const handoffView = deskPanel(
-    "Controlled Handoff",
-    "Routing",
-    <div className="space-y-3 px-4 py-4">
-      {field("Target Gateway", <select value={handoffGatewayId} onChange={(event) => setHandoffGatewayId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall">{instanceIds.map((instanceId) => <option key={instanceId} value={instanceId}>{instances[instanceId]?.label ?? instanceId}</option>)}</select>)}
-      {field("Target Agent", <select value={handoffAgentId} onChange={(event) => setHandoffAgentId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="main">Gateway Default</option>{Object.values(agentsByInstance[handoffGatewayId] ?? {}).map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.name}</option>)}</select>)}
-      {field("Operator Note", <textarea value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} placeholder="Brief the next gateway on what needs to happen." className="min-h-24 w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-3 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
-      <button type="button" onClick={() => void handoffSession()} disabled={!selectedSessionKey} className={`w-full ${buttonClasses("primary")}`}>Create Handoff Session</button>
-    </div>,
+      "Controlled Handoff",
+      "Routing",
+      <div className="space-y-3 px-4 py-4">
+        {field("Target Gateway", <select value={handoffGatewayId} onChange={(event) => setHandoffGatewayId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall">{instanceIds.map((instanceId) => <option key={instanceId} value={instanceId}>{instances[instanceId]?.label ?? instanceId}</option>)}</select>)}
+        {field("Target Agent", <select value={handoffAgentId} onChange={(event) => setHandoffAgentId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="main">Gateway Default Agent</option>{Object.values(agentsByInstance[handoffGatewayId] ?? {}).map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.name}</option>)}</select>)}
+        {field("Operator Note", <textarea value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} placeholder="Brief the next gateway on what needs to happen." className="min-h-24 w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-3 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+        <button type="button" onClick={() => void handoffSession()} disabled={!selectedSessionKey} className={`w-full ${buttonClasses("primary")}`}>Create Handoff Session</button>
+      </div>,
   );
 
   if (instanceIds.length === 0) return noGatewaysView;
@@ -743,6 +1289,25 @@ export function SessionDesk() {
               <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-screen-off/60 p-3"><div className="text-[10px] uppercase tracking-[0.25em] text-dunder-carpet">Models</div><div className="mt-2 font-dunder text-2xl font-bold text-dunder-paper">{models.length}</div></div>
             </div>
           </div>
+        </div>
+        <div className="px-4 pt-4">
+          <OperatorGuide
+            eyebrow="How It Works"
+            title="Agents, characters, and sessions are different things"
+            summary="Mission Control sits on top of OpenClaw. Gateways provide the real agents. Character mapping only changes the Office persona you see. Session Desk is where you create the actual work threads and route them to an agent, model, and channel."
+            terms={DESK_TERMS}
+            steps={DESK_STEPS}
+            actions={(
+              <>
+                <button type="button" onClick={() => openPanel({ type: "settings" })} className={buttonClasses()}>
+                  Character Mapping
+                </button>
+                <button type="button" onClick={() => setDeskFocus({ section: "workbench" })} className={buttonClasses("primary")}>
+                  Gateway Workbench
+                </button>
+              </>
+            )}
+          />
         </div>
         <div className="grid min-h-0 flex-1 gap-4 p-4 xl:grid-cols-[280px_320px_minmax(0,1fr)]">
           <aside className="min-h-0 overflow-y-auto">{sidebar}</aside>

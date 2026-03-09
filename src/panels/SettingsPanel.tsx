@@ -4,9 +4,11 @@ import { useAgentStore } from "../store/useAgentStore";
 import { useCharacterStore } from "../store/useCharacterStore";
 import { THE_OFFICE_CHARACTERS } from "../characters/registry";
 import { applyCharacterAssignments } from "../gateway/useGatewayConnection";
+import { OperatorGuide } from "../building/OperatorGuide";
 
 export function SettingsPanel() {
   const closePanel = useUIStore((s) => s.closePanel);
+  const openDesk = useUIStore((s) => s.openDesk);
   const easterEggsEnabled = useUIStore((s) => s.easterEggsEnabled);
   const soundEnabled = useUIStore((s) => s.soundEnabled);
   const toggleEasterEggs = useUIStore((s) => s.toggleEasterEggs);
@@ -36,9 +38,42 @@ export function SettingsPanel() {
         <button onClick={closePanel} className="text-gray-400 hover:text-white text-xl leading-none p-1">&times;</button>
       </div>
 
+      <OperatorGuide
+        eyebrow="Casting Call"
+        title="Characters are visual assignments, not agent creation"
+        summary="Use this panel to decide which Office character represents each real gateway agent. The underlying agent id, tools, and runtime stay the same. Session Desk is where you create work for those agents."
+        steps={[
+          {
+            title: "Load agents from a gateway",
+            body: "Connect a gateway first. Mission Control only maps characters onto agents that already exist there.",
+          },
+          {
+            title: "Pick a character or stay on auto",
+            body: "Auto assign lets Mission Control choose the cast. A manual override locks a specific Office character to that agent.",
+          },
+          {
+            title: "Route work in Session Desk",
+            body: "After the cast is set, use Session Desk to create sessions, choose models, and route work to the agent you want.",
+          },
+        ]}
+        actions={(
+          <button
+            type="button"
+            onClick={() => openDesk({ section: "sessions" })}
+            className="rounded-md border border-dunder-paper/35 bg-dunder-paper/12 px-3 py-2 text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/18"
+          >
+            Open Session Desk
+          </button>
+        )}
+        compact
+      />
+
       {/* Character Mapping */}
       <div className="bg-gray-800/50 rounded-lg p-3 space-y-3">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Character Mapping</h3>
+        <p className="text-sm text-dunder-wall">
+          These dropdowns only change the Office character shown in Mission Control. They do not create, rename, or delete agents on the gateway.
+        </p>
         {allInstances.length === 0 ? (
           <p className="text-sm text-gray-500">Connect a gateway to assign characters.</p>
         ) : (
@@ -68,6 +103,9 @@ export function SettingsPanel() {
                         <div className="text-xs text-dunder-paper truncate font-dunder">
                           {agent.name}
                           {isOverridden && <span className="ml-1 text-amber-400 text-[9px]">★</span>}
+                        </div>
+                        <div className="text-[10px] text-dunder-carpet font-mono truncate">
+                          {agent.agentId}
                         </div>
                         <select
                           value={currentCharId}

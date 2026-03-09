@@ -97,6 +97,32 @@ export function AgentPanel({ instanceId, agentId }: Props) {
       >
         Open Session Desk
       </button>
+      <button
+        onClick={() => openPanel({ type: "settings" })}
+        className="w-full py-2.5 bg-dunder-screen-off/70 hover:bg-dunder-screen-off text-dunder-paper text-sm font-dunder rounded-lg transition-colors border border-dunder-carpet/30"
+      >
+        Character Mapping
+      </button>
+
+      <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 p-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-dunder-carpet">
+          How This Works
+        </h3>
+        <div className="mt-2 space-y-2 text-sm text-dunder-wall">
+          <p>
+            <span className="font-dunder font-bold text-dunder-paper">Real agent:</span>{" "}
+            <span className="font-mono text-xs">{agent.agentId}</span>
+          </p>
+          <p>
+            <span className="font-dunder font-bold text-dunder-paper">Office character:</span>{" "}
+            {character?.name ?? "No character override yet"}
+          </p>
+          <p>
+            Gateway Workbench provisions real agents. Session Desk creates and routes work for
+            them. Character Mapping only changes how the agent appears in Mission Control.
+          </p>
+        </div>
+      </div>
 
       {/* Status Banner */}
       <div className={`rounded-lg p-3 ${stateInfo.bg} border border-gray-700/50`}>

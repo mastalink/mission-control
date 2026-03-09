@@ -43,6 +43,7 @@ type GatewayStore = {
   setConnecting: (instanceId: string) => void;
   setConnected: (instanceId: string, hello: GatewayHelloOk) => void;
   setDisconnected: (instanceId: string, error?: string) => void;
+  setDefaultAgentId: (instanceId: string, agentId: string | null) => void;
 
   // Saved connection management
   saveConnection: (conn: SavedConnection) => void;
@@ -139,6 +140,21 @@ export const useGatewayStore = create<GatewayStore>()(
                 ...existing,
                 status: error ? "error" : "disconnected",
                 error: error ?? null,
+              },
+            },
+          };
+        }),
+
+      setDefaultAgentId: (instanceId, agentId) =>
+        set((state) => {
+          const existing = state.instances[instanceId];
+          if (!existing) return state;
+          return {
+            instances: {
+              ...state.instances,
+              [instanceId]: {
+                ...existing,
+                defaultAgentId: agentId,
               },
             },
           };
