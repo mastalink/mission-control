@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { OfficeVoiceMode } from "./useUIStore";
 import type {
   ChatEvent,
   ChatHistoryMessage,
@@ -58,6 +59,13 @@ export type SessionStreamState = {
   errorMessage?: string;
 };
 
+export type SessionPersonaState = {
+  characterId: string;
+  voiceMode: OfficeVoiceMode;
+  injectedAt: number;
+  supported: boolean;
+};
+
 type OpsInstanceState = {
   capabilities: GatewayCapabilities;
   sessions: SessionEntry[];
@@ -67,6 +75,7 @@ type OpsInstanceState = {
   sessionDetails: Record<string, SessionDetail>;
   histories: Record<string, ChatHistoryMessage[]>;
   sessionStreams: Record<string, SessionStreamState>;
+  sessionPersonas: Record<string, SessionPersonaState>;
   historyNeedsRefresh: Record<string, boolean>;
   models?: ModelsListResult;
   status?: GatewayStatusResult;
@@ -105,6 +114,8 @@ type OpsStore = {
   markHistoryFresh: (instanceId: string, sessionKey: string) => void;
   updateFromChatEvent: (instanceId: string, event: ChatEvent) => void;
   clearSessionStream: (instanceId: string, sessionKey: string) => void;
+  setSessionPersonaState: (instanceId: string, sessionKey: string, state: SessionPersonaState) => void;
+  clearSessionPersonaState: (instanceId: string, sessionKey: string) => void;
   setModels: (instanceId: string, models: ModelsListResult) => void;
   setStatus: (instanceId: string, status: GatewayStatusResult) => void;
   setHealth: (instanceId: string, health: HealthStatusResult) => void;
@@ -138,6 +149,7 @@ function createInstanceState(): OpsInstanceState {
     sessionDetails: {},
     histories: {},
     sessionStreams: {},
+    sessionPersonas: {},
     historyNeedsRefresh: {},
     models: undefined,
     status: undefined,
@@ -270,6 +282,10 @@ export const useOpsStore = create<OpsStore>()(
         set((state) => {
           const current = ensureOpsInstance(state.instances, instanceId);
           const selectedExists = result.sessions.some((session) => session.key === current.selectedSessionKey);
+          const allowedKeys = new Set(result.sessions.map((session) => session.key));
+          const nextPersonas = Object.fromEntries(
+            Object.entries(current.sessionPersonas).filter(([key]) => allowedKeys.has(key)),
+          );
           return {
             instances: {
               ...state.instances,
@@ -277,6 +293,7 @@ export const useOpsStore = create<OpsStore>()(
                 ...current,
                 sessions: result.sessions,
                 sessionDefaults: result.defaults,
+                sessionPersonas: nextPersonas,
                 selectedSessionKey:
                   current.selectedSessionKey && selectedExists
                     ? current.selectedSessionKey
@@ -415,6 +432,38 @@ export const useOpsStore = create<OpsStore>()(
               [instanceId]: {
                 ...current,
                 sessionStreams: rest,
+              },
+            },
+          };
+        }),
+
+      setSessionPersonaState: (instanceId, sessionKey, sessionPersona) =>
+        set((state) => {
+          const current = ensureOpsInstance(state.instances, instanceId);
+          return {
+            instances: {
+              ...state.instances,
+              [instanceId]: {
+                ...current,
+                sessionPersonas: {
+                  ...current.sessionPersonas,
+                  [sessionKey]: sessionPersona,
+                },
+              },
+            },
+          };
+        }),
+
+      clearSessionPersonaState: (instanceId, sessionKey) =>
+        set((state) => {
+          const current = ensureOpsInstance(state.instances, instanceId);
+          const { [sessionKey]: _, ...rest } = current.sessionPersonas;
+          return {
+            instances: {
+              ...state.instances,
+              [instanceId]: {
+                ...current,
+                sessionPersonas: rest,
               },
             },
           };

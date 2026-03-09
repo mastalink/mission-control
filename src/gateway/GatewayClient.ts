@@ -3,6 +3,7 @@ import type {
   AgentsListResult,
   ChannelsStatusResult,
   ChatHistoryResult,
+  ChatInjectResult,
   ChatSendResult,
   ConfigMutationResult,
   ConfigSchemaLookupResult,
@@ -196,6 +197,16 @@ export class GatewayClient {
   /** Fetch chat history for a session */
   async chatHistory(sessionKey: string, limit = 50): Promise<ChatHistoryResult> {
     return this.request("chat.history", { sessionKey, limit });
+  }
+
+  async chatInject(params: {
+    sessionKey: string;
+    text: string;
+  }): Promise<ChatInjectResult> {
+    return this.request("chat.inject", {
+      sessionKey: params.sessionKey,
+      text: params.text,
+    });
   }
 
   async chatAbort(sessionKey: string, runId: string): Promise<{ ok: boolean }> {

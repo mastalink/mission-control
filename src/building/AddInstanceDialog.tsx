@@ -4,6 +4,7 @@ import { testGatewayConnection, type TestGatewayConnectionResult } from "../gate
 import { normalizeGatewayUrl } from "../gateway/connectionUtils";
 import { useUIStore } from "../store/useUIStore";
 import { useGatewayStore, type SavedConnection, type ConnectionStatus } from "../store/useGatewayStore";
+import { DwightCoach } from "./DwightCoach";
 
 type Props = {
   onConnect: (config: {
@@ -115,6 +116,7 @@ function actionButtonClass(tone: "neutral" | "primary" | "danger" = "neutral"): 
 export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
   const show = useUIStore((s) => s.showAddInstance);
   const toggle = useUIStore((s) => s.toggleAddInstance);
+  const uiMode = useUIStore((s) => s.uiMode);
   const savedConnections = useGatewayStore((s) => s.savedConnections);
   const instances = useGatewayStore((s) => s.instances);
   const saveConnection = useGatewayStore((s) => s.saveConnection);
@@ -138,6 +140,7 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
   const primaryBusy = currentLive?.status === "connecting" || testState.status === "testing";
   const primaryLabel =
     currentLive && isActiveStatus(currentLive.status) ? "Reconnect Now" : "Connect Now";
+  const isIdiotMode = uiMode === "idiot";
 
   const resetComposer = () => {
     setDraft(createEmptyDraft());
@@ -288,9 +291,13 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="text-[11px] uppercase tracking-[0.35em] text-sky-300/80">Connection Control</div>
-              <h2 className="mt-2 text-2xl font-bold text-white font-dunder">Gateway Control Room</h2>
+              <h2 className="mt-2 text-2xl font-bold text-white font-dunder">
+                {isIdiotMode ? "Connect Office" : "Gateway Control Room"}
+              </h2>
               <p className="mt-2 max-w-2xl text-sm text-slate-300">
-                Test, save, edit, reconnect, clone, and remove OpenClaw gateways from one place.
+                {isIdiotMode
+                  ? "Type the office name, server address, and secret key. The rest is optional because panic is not a setup strategy."
+                  : "Test, save, edit, reconnect, clone, and remove OpenClaw gateways from one place."}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-300">
@@ -317,7 +324,9 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <div className="text-sm font-semibold text-white">Saved Gateways</div>
-                <div className="text-xs text-slate-400">Reusable connection profiles</div>
+                <div className="text-xs text-slate-400">
+                  {isIdiotMode ? "Saved office connections" : "Reusable connection profiles"}
+                </div>
               </div>
               <button onClick={resetComposer} className={actionButtonClass()} type="button">
                 New
@@ -437,10 +446,14 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-sm font-semibold text-white">
-                  {mode === "edit" ? "Edit Gateway Profile" : "New Gateway Profile"}
+                  {mode === "edit"
+                    ? isIdiotMode ? "Edit Office Connection" : "Edit Gateway Profile"
+                    : isIdiotMode ? "New Office Connection" : "New Gateway Profile"}
                 </div>
                 <div className="text-sm text-slate-400">
-                  Save profiles for later, or connect immediately after testing.
+                  {isIdiotMode
+                    ? "Fill in the three boxes, then connect. Advanced controls stay out of your way unless you ask for them."
+                    : "Save profiles for later, or connect immediately after testing."}
                 </div>
               </div>
               <div className="flex gap-2">
@@ -473,10 +486,21 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
             )}
 
             <form onSubmit={handleConnectNow} className="space-y-5">
+              {isIdiotMode && (
+                <DwightCoach
+                  step="connect"
+                  compact
+                  headline="Connect the office before you try to make workers or chats."
+                  detail="An office connection is the live wire into OpenClaw. No connection means no workers, no chats, no heroics."
+                  nextActionLabel="Type the office name, server address, and secret key, then press Connect Now."
+                />
+              )}
               <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
                 <div className="space-y-4">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-200">Branch Name</label>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-200">
+                      {isIdiotMode ? "Office Name" : "Branch Name"}
+                    </label>
                     <input
                       type="text"
                       value={draft.label}
@@ -489,7 +513,9 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-200">Gateway URL</label>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-200">
+                      {isIdiotMode ? "Server Address" : "Gateway URL"}
+                    </label>
                     <input
                       type="text"
                       value={draft.url}
@@ -504,7 +530,9 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-200">Auth Token</label>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-200">
+                      {isIdiotMode ? "Secret Key" : "Auth Token"}
+                    </label>
                     <input
                       type="password"
                       value={draft.token}
@@ -545,9 +573,13 @@ export function AddInstanceDialog({ onConnect, onDisconnect }: Props) {
               <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-white">Connection Test Bench</div>
+                    <div className="text-sm font-semibold text-white">
+                      {isIdiotMode ? "Advanced Connection Test" : "Connection Test Bench"}
+                    </div>
                     <div className="text-xs text-slate-400">
-                      Verifies the gateway handshake before committing the profile.
+                      {isIdiotMode
+                        ? "Only use this if the obvious connect button fails."
+                        : "Verifies the gateway handshake before committing the profile."}
                     </div>
                   </div>
                   <button

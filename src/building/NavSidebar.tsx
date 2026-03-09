@@ -12,7 +12,9 @@ const NAV_ITEMS: { id: ActivePage; label: string; icon: string }[] = [
 export function NavSidebar() {
   const activePage = useUIStore((state) => state.activePage);
   const setActivePage = useUIStore((state) => state.setActivePage);
+  const setDeskFocus = useUIStore((state) => state.setDeskFocus);
   const toggleAddInstance = useUIStore((state) => state.toggleAddInstance);
+  const uiMode = useUIStore((state) => state.uiMode);
   const instances = useGatewayStore((state) => state.instances);
   const agents = useAgentStore((state) => state.agents);
   const hasConnections = Object.keys(instances).length > 0;
@@ -52,12 +54,27 @@ export function NavSidebar() {
 
       <nav className="flex-1 space-y-0.5 px-2 py-3">
         {NAV_ITEMS.map((item) => {
+          const label =
+            uiMode === "idiot"
+              ? item.id === "dashboard"
+                ? "Overview"
+                : item.id === "floorplan"
+                  ? "Office Map"
+                  : item.id === "roster"
+                    ? "Workers"
+                    : "Start Chat"
+              : item.label;
           const isActive = activePage === item.id;
           return (
             <button
               key={item.id}
               type="button"
-              onClick={() => setActivePage(item.id)}
+              onClick={() => {
+                if (item.id === "desk" && uiMode === "idiot") {
+                  setDeskFocus({ section: "setup" });
+                }
+                setActivePage(item.id);
+              }}
               className={`flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm transition-colors ${
                 isActive
                   ? "border border-dunder-carpet/30 bg-dunder-paper/10 text-dunder-paper"
@@ -67,7 +84,7 @@ export function NavSidebar() {
               <span className="w-5 text-center font-mono text-[11px] opacity-80">
                 {item.icon}
               </span>
-              <span className="font-dunder">{item.label}</span>
+              <span className="font-dunder">{label}</span>
             </button>
           );
         })}
@@ -109,7 +126,7 @@ export function NavSidebar() {
             onClick={toggleAddInstance}
             className="mt-1 w-full px-1 py-0.5 text-left text-[10px] text-dunder-carpet transition-colors hover:text-dunder-wall"
           >
-            + add gateway
+            {uiMode === "idiot" ? "+ connect office" : "+ add gateway"}
           </button>
         </div>
       )}

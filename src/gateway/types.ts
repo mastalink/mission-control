@@ -293,6 +293,12 @@ export type ChatSendResult = {
   status: string;
 };
 
+export type ChatInjectResult = {
+  ok?: boolean;
+  sessionKey?: string;
+  messageId?: string;
+};
+
 export type ModelCatalogEntry = {
   ref: string;
   alias?: string;

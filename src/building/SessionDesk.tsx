@@ -1,7 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { THE_OFFICE_CHARACTERS } from "../characters/registry";
+import { DwightCoach } from "./DwightCoach";
+import {
+  getConceptLabels,
+  getVoiceLine,
+} from "../characters/officeVoice";
+import { THE_OFFICE_CHARACTERS, getCharacterById } from "../characters/registry";
 import { loadDemoData } from "../demo/loadDemo";
 import { getGatewayManager } from "../gateway/gatewayRef";
+import { ensureSessionOfficeVoice } from "../gateway/sessionOfficeVoice";
 import type { ChatHistoryMessage, SessionDetail, SessionEntry } from "../gateway/types";
 import { applyCharacterAssignments } from "../gateway/useGatewayConnection";
 import { useCharacterStore } from "../store/useCharacterStore";
@@ -300,10 +306,16 @@ export function SessionDesk() {
   const setActiveInstance = useGatewayStore((state) => state.setActiveInstance);
   const agentsByInstance = useAgentStore((state) => state.agents);
   const channelsByInstance = useChannelStore((state) => state.channels);
+  const characterOverrides = useCharacterStore((state) => state.overrides);
   const deskFocus = useUIStore((state) => state.deskFocus);
   const setDeskFocus = useUIStore((state) => state.setDeskFocus);
   const openPanel = useUIStore((state) => state.openPanel);
   const toggleAddInstance = useUIStore((state) => state.toggleAddInstance);
+  const uiMode = useUIStore((state) => state.uiMode);
+  const officeVoiceMode = useUIStore((state) => state.officeVoiceMode);
+  const coachDismissed = useUIStore((state) => state.coachDismissed);
+  const dismissCoach = useUIStore((state) => state.dismissCoach);
+  const setCoachStep = useUIStore((state) => state.setCoachStep);
 
   const opsInstances = useOpsStore((state) => state.instances);
   const routingProfiles = useOpsStore((state) => state.routingProfiles);
@@ -312,6 +324,7 @@ export function SessionDesk() {
   const setSessions = useOpsStore((state) => state.setSessions);
   const setSessionDetail = useOpsStore((state) => state.setSessionDetail);
   const setHistory = useOpsStore((state) => state.setHistory);
+  const setSessionPersonaState = useOpsStore((state) => state.setSessionPersonaState);
   const setModels = useOpsStore((state) => state.setModels);
   const setStatus = useOpsStore((state) => state.setStatus);
   const setHealth = useOpsStore((state) => state.setHealth);
@@ -333,7 +346,7 @@ export function SessionDesk() {
   const currentInstanceId = deskFocus.instanceId ?? activeInstanceId ?? instanceIds[0] ?? null;
   const currentInstance = currentInstanceId ? instances[currentInstanceId] : undefined;
   const currentOps = currentInstanceId ? opsInstances[currentInstanceId] : undefined;
-  const currentSection: DeskSection = deskFocus.section ?? "sessions";
+  const currentSection: DeskSection = deskFocus.section ?? (uiMode === "idiot" ? "setup" : "sessions");
   const defaultAgentId = currentInstance?.defaultAgentId ?? null;
   const currentAgents = currentInstanceId ? Object.values(agentsByInstance[currentInstanceId] ?? {}) : [];
   const currentChannels = currentInstanceId ? Object.values(channelsByInstance[currentInstanceId] ?? {}) : [];
@@ -343,6 +356,7 @@ export function SessionDesk() {
   const selectedDetail = selectedSessionKey ? currentOps?.sessionDetails[selectedSessionKey] : undefined;
   const selectedHistory = selectedSessionKey ? currentOps?.histories[selectedSessionKey] ?? [] : [];
   const selectedStream = selectedSessionKey ? currentOps?.sessionStreams[selectedSessionKey] : undefined;
+  const selectedPersonaState = selectedSessionKey ? currentOps?.sessionPersonas[selectedSessionKey] : undefined;
 
   const [search, setSearch] = useState("");
   const [composer, setComposer] = useState("");
@@ -385,6 +399,27 @@ export function SessionDesk() {
   const configuredAgents = extractConfiguredAgents(configRecord);
   const configuredBindings = extractRouteBindings(configRecord);
   const runtimeAgentIds = new Set(currentAgents.map((agent) => agent.agentId));
+  const gatewayLabel = getConceptLabels(uiMode, "gateway");
+  const agentLabel = getConceptLabels(uiMode, "agent");
+  const sessionLabel = getConceptLabels(uiMode, "session");
+  const mappingLabel = getConceptLabels(uiMode, "mapping");
+  const hasCharacterOverride = currentInstanceId
+    ? Object.keys(characterOverrides[currentInstanceId] ?? {}).length > 0
+    : false;
+  const shouldOfferCharacterStep =
+    currentAgents.length > 0 &&
+    (currentOps?.sessions.length ?? 0) === 0 &&
+    !hasCharacterOverride;
+  const coachStep =
+    instanceIds.length === 0
+      ? "connect"
+      : currentAgents.length === 0
+        ? "worker"
+        : shouldOfferCharacterStep
+          ? "character"
+          : (currentOps?.sessions.length ?? 0) === 0
+            ? "chat"
+            : "done";
 
   function setProvisionDraft(patch: Partial<AgentProvisioningDraft>) {
     if (!currentInstanceId) return;
@@ -445,6 +480,13 @@ export function SessionDesk() {
       groupActivation: selectedDetail?.groupActivation ?? selectedSession?.groupActivation ?? "",
     });
   }, [selectedDetail, selectedSession]);
+
+  useEffect(() => {
+    setCoachStep(coachStep);
+    if (coachStep !== "done") {
+      dismissCoach(false);
+    }
+  }, [coachStep, dismissCoach, setCoachStep]);
 
   async function refreshDesk(instanceId = currentInstanceId, includeLogs = false) {
     if (!instanceId) return;
@@ -521,7 +563,7 @@ export function SessionDesk() {
       }
       await refreshDesk(currentInstanceId);
       selectSession(currentInstanceId, sessionKey);
-      setDeskFocus({ instanceId: currentInstanceId, sessionKey, section: "sessions", agentId: agentId ?? undefined, channelId: createChannelId || undefined });
+      setDeskFocus({ instanceId: currentInstanceId, sessionKey, section: uiMode === "idiot" ? "setup" : "sessions", agentId: agentId ?? undefined, channelId: createChannelId || undefined });
       setCreateLabel("");
       setStatusMessage(`Opened ${label} on ${currentInstance?.label ?? currentInstanceId}.`);
     });
@@ -552,11 +594,24 @@ export function SessionDesk() {
     const client = getGatewayManager()?.getClient(currentInstanceId);
     if (!client) return;
     const message = composer.trim();
+    const activeAgentId = sessionAgentId(selectedSessionKey, defaultAgentId);
+    const activeAgent = activeAgentId
+      ? currentAgents.find((agent) => agent.agentId === activeAgentId)
+      : undefined;
     setComposer("");
     await runAction("send-message", async () => {
       setHistory(currentInstanceId, selectedSessionKey, [...selectedHistory, { role: "user", content: message, ts: Date.now() }]);
+      const voiceResult = await ensureSessionOfficeVoice({
+        client,
+        methods: currentMethods,
+        sessionKey: selectedSessionKey,
+        characterId: activeAgent?.characterId,
+        voiceMode: officeVoiceMode,
+        currentState: selectedPersonaState,
+        onState: (state) => setSessionPersonaState(currentInstanceId, selectedSessionKey, state),
+      });
       await client.chatSend({ sessionKey: selectedSessionKey, message, thinking: sessionDraft.thinkingLevel || undefined });
-      setStatusMessage("Message dispatched to gateway.");
+      setStatusMessage(voiceResult.message ?? "Message dispatched to gateway.");
     });
   }
 
@@ -834,16 +889,65 @@ export function SessionDesk() {
     ? (customProvisionModelByInstance[currentInstanceId] ?? false) || usesUnknownProvisionModel
     : usesUnknownProvisionModel;
   const configDiff = diffPreview(currentOps?.config?.raw ?? JSON.stringify(currentOps?.config?.config ?? {}, null, 2), currentOps?.configDraft?.rawText ?? "");
+  const activeSessionAgentId = selectedSessionKey ? sessionAgentId(selectedSessionKey, defaultAgentId) : undefined;
+  const activeSessionAgent = activeSessionAgentId
+    ? currentAgents.find((agent) => agent.agentId === activeSessionAgentId)
+    : undefined;
+  const activeSessionCharacter = activeSessionAgent?.characterId ? getCharacterById(activeSessionAgent.characterId) : null;
+  const sessionGreeting = getVoiceLine(
+    activeSessionCharacter,
+    officeVoiceMode,
+    "greeting",
+    "The chat is ready for instructions.",
+  );
+  const idiotTitle =
+    coachStep === "connect"
+      ? "Connect the office first."
+      : coachStep === "worker"
+        ? "Make a worker next."
+        : coachStep === "character"
+          ? "Pick the Office costume if you care."
+          : coachStep === "chat"
+            ? "Start the first chat."
+            : "You are operational.";
+  const idiotDetail =
+    coachStep === "connect"
+      ? "No office connection means no real workers, no chats, and no point pretending otherwise."
+      : coachStep === "worker"
+        ? "Workers are the real OpenClaw brains. Make one here before you try to send work anywhere."
+        : coachStep === "character"
+          ? "Auto-casting already works. This step is optional unless you want a specific worker to sound like a specific Office character."
+          : coachStep === "chat"
+            ? "Tell a worker what to do. Use a short job description, then open the chat and send the real task."
+            : "You have an office, at least one worker, and at least one chat. Do not squander this victory.";
+  const idiotNextAction =
+    coachStep === "connect"
+      ? "Connect Office"
+      : coachStep === "worker"
+        ? "Make Worker"
+        : coachStep === "character"
+          ? "Pick Office Character"
+          : coachStep === "chat"
+            ? "Start Chat"
+            : "Keep Working";
   const noGatewaysView = (
     <div className="office-carpet flex h-full items-center justify-center p-6">
       <div className="max-w-xl rounded-2xl border border-dunder-carpet/30 bg-dunder-blue/90 p-8 text-center shadow-2xl">
-        <div className="text-[11px] uppercase tracking-[0.35em] text-dunder-carpet">Session Desk</div>
-        <h1 className="mt-3 font-dunder text-3xl font-bold text-dunder-paper">No gateways on the board</h1>
+        <div className="text-[11px] uppercase tracking-[0.35em] text-dunder-carpet">
+          {uiMode === "idiot" ? "Start Chat" : "Session Desk"}
+        </div>
+        <h1 className="mt-3 font-dunder text-3xl font-bold text-dunder-paper">
+          {uiMode === "idiot" ? "No office connection yet" : "No gateways on the board"}
+        </h1>
         <p className="mt-3 font-dunder text-sm text-dunder-wall">
-          Connect a gateway to route real OpenClaw sessions, approvals, node events, and config changes from Mission Control.
+          {uiMode === "idiot"
+            ? "False. You cannot start work without connecting the office first."
+            : "Connect a gateway to route real OpenClaw sessions, approvals, node events, and config changes from Mission Control."}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <button type="button" onClick={toggleAddInstance} className={buttonClasses("primary")}>Connect Gateway</button>
+          <button type="button" onClick={toggleAddInstance} className={buttonClasses("primary")}>
+            {uiMode === "idiot" ? "Connect Office" : "Connect Gateway"}
+          </button>
           <button type="button" onClick={loadDemoData} className={buttonClasses()}>Open Demo Desk</button>
         </div>
       </div>
@@ -1250,7 +1354,270 @@ export function SessionDesk() {
       </div>,
   );
 
+  const idiotModeView = (
+    <div className="office-carpet h-full overflow-y-auto bg-dunder-blue">
+      <div className="mx-auto max-w-6xl space-y-4 p-4">
+        <div className="rounded-xl border border-dunder-carpet/25 bg-dunder-blue/90 px-5 py-4 shadow-xl">
+          <div className="text-[10px] uppercase tracking-[0.35em] text-dunder-carpet">
+            Dunder Mifflin Acting Expert Console
+          </div>
+          <h1 className="mt-2 font-dunder text-3xl font-bold text-dunder-paper">Start Chat</h1>
+          <p className="mt-1 font-dunder text-sm text-dunder-wall">
+            {officeVoiceMode === "off"
+              ? "Workers will talk plainly."
+              : officeVoiceMode === "light"
+                ? "Workers keep their Office flavor but stay practical."
+                : "Workers are fully in character. This will be loud."}
+          </p>
+        </div>
+
+        {!coachDismissed || coachStep !== "done" ? (
+          <DwightCoach
+            step={coachStep}
+            headline={idiotTitle}
+            detail={idiotDetail}
+            nextActionLabel={idiotNextAction}
+            actions={(
+              <button
+                type="button"
+                onClick={() => dismissCoach(true)}
+                className={buttonClasses()}
+              >
+                Hide Coach
+              </button>
+            )}
+          />
+        ) : (
+          <div className="flex justify-end">
+            <button type="button" onClick={() => dismissCoach(false)} className={buttonClasses()}>
+              Show Dwight Coach
+            </button>
+          </div>
+        )}
+
+        {statusMessage ? <div className="rounded border border-green-500/30 bg-green-950/30 px-3 py-2 text-sm text-green-200">{statusMessage}</div> : null}
+        {errorMessage ? <div className="rounded border border-red-500/30 bg-red-950/30 px-3 py-2 text-sm text-red-200">{errorMessage}</div> : null}
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_340px]">
+          <div className="space-y-4">
+            {coachStep === "worker" ? (
+              deskPanel(
+                `Make ${agentLabel.primary}`,
+                agentLabel.technical,
+                <div className="space-y-3 px-4 py-4">
+                  <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-3 py-3 text-sm leading-6 text-dunder-wall">
+                    Workers are the real OpenClaw brains. Give this one a name, an id, and a brain. Everything else is optional.
+                  </div>
+                  {field("Worker name", <input value={provisionDraft.name} onChange={(event) => setProvisionDraft({ name: event.target.value })} placeholder="Dwight Tasks" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+                  {field("Worker id", <input value={provisionDraft.agentId} onChange={(event) => setProvisionDraft({ agentId: slugAgentId(event.target.value), workspace: defaultWorkspace(slugAgentId(event.target.value)), agentDir: defaultAgentDir(slugAgentId(event.target.value)) })} placeholder="dwight-tasks" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+                  {field("Brain", <select value={customProvisionModelOpen ? CUSTOM_MODEL_VALUE : provisionDraft.modelPrimary || ""} onChange={(event) => {
+                    if (!currentInstanceId) return;
+                    if (event.target.value === CUSTOM_MODEL_VALUE) {
+                      setCustomProvisionModelByInstance((state) => ({ ...state, [currentInstanceId]: true }));
+                      return;
+                    }
+                    setCustomProvisionModelByInstance((state) => ({ ...state, [currentInstanceId]: false }));
+                    setProvisionDraft({ modelPrimary: event.target.value });
+                  }} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Use gateway default brain</option>{knownProvisionModels.map((model) => <option key={model.ref} value={model.ref}>{modelOptionLabel(model)}</option>)}<option value={CUSTOM_MODEL_VALUE}>Custom brain ref...</option></select>)}
+                  {customProvisionModelOpen ? field("Custom brain ref", <input value={provisionDraft.modelPrimary} onChange={(event) => setProvisionDraft({ modelPrimary: event.target.value })} placeholder="openai/gpt-5" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-mono text-sm text-dunder-paper outline-none focus:border-dunder-wall" />) : null}
+                  {field("Office character", <select value={provisionDraft.characterId} onChange={(event) => setProvisionDraft({ characterId: event.target.value })} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Auto cast for me</option>{THE_OFFICE_CHARACTERS.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}</select>)}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void provisionAgent()} disabled={!currentOps?.configDraft || busyAction === "provision-agent"} className={buttonClasses("primary")}>
+                      {busyAction === "provision-agent" ? "Making worker..." : "Make Worker"}
+                    </button>
+                    <button type="button" onClick={() => setDeskFocus({ section: "workbench" })} className={buttonClasses()}>
+                      Show Advanced Worker Settings
+                    </button>
+                  </div>
+                </div>,
+              )
+            ) : coachStep === "character" ? (
+              deskPanel(
+                mappingLabel.primary,
+                mappingLabel.technical,
+                <div className="space-y-3 px-4 py-4">
+                  <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-3 py-3 text-sm leading-6 text-dunder-wall">
+                    Auto-casting already works. This step is optional. Only come here if you want a worker to be a very specific Office person.
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {currentAgents.slice(0, 4).map((agent) => (
+                      <div key={agent.agentId} className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/6 px-3 py-3">
+                        <div className="font-dunder text-sm font-bold text-dunder-paper">{agent.name}</div>
+                        <div className="mt-1 font-mono text-[11px] text-dunder-carpet">{agent.agentId}</div>
+                        <div className="mt-2 text-sm text-dunder-wall">
+                          {agent.characterId ? `Currently cast as ${getCharacterById(agent.characterId)?.name ?? agent.characterId}.` : "No cast chosen yet."}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => openPanel({ type: "settings" })} className={buttonClasses("primary")}>
+                      Pick Office Character
+                    </button>
+                    <button type="button" onClick={() => setDeskFocus({ section: "setup" })} className={buttonClasses()}>
+                      Skip For Now
+                    </button>
+                  </div>
+                </div>,
+              )
+            ) : (
+              deskPanel(
+                `Start ${sessionLabel.primary}`,
+                sessionLabel.technical,
+                <div className="space-y-3 px-4 py-4">
+                  <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-3 py-3 text-sm leading-6 text-dunder-wall">
+                    Start by naming the job, picking the worker, and choosing a brain only if the default one is wrong.
+                  </div>
+                  {field("What should this chat be about?", <input value={createLabel} onChange={(event) => setCreateLabel(event.target.value)} placeholder="Follow up with regional inventory team" className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />)}
+                  {field("Worker", <select value={createAgentId} onChange={(event) => setCreateAgentId(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="main">Use default worker</option>{currentAgents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.name}</option>)}</select>)}
+                  {field("Brain", <select value={createModel} onChange={(event) => setCreateModel(event.target.value)} className="w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall"><option value="">Use default brain</option>{models.map((model) => <option key={model.ref} value={model.ref}>{model.label ?? model.alias ?? model.ref}</option>)}</select>)}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void createSession()} disabled={busyAction === "create-session"} className={buttonClasses("primary")}>
+                      {busyAction === "create-session" ? "Starting..." : "Start Chat"}
+                    </button>
+                    <button type="button" onClick={() => setDeskFocus({ section: "sessions" })} className={buttonClasses()}>
+                      Show Full Desk
+                    </button>
+                  </div>
+                  {selectedSessionKey ? (
+                    <div className="rounded-lg border border-dunder-carpet/20 bg-dunder-blue/40 p-3">
+                      <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-dunder-carpet">
+                        Current chat
+                      </div>
+                      <div className="mt-2 font-dunder text-base font-bold text-dunder-paper">
+                        {sessionTitle(selectedSession)}
+                      </div>
+                      <div className="mt-1 text-sm text-dunder-wall">{sessionGreeting}</div>
+                    </div>
+                  ) : null}
+                </div>,
+              )
+            )}
+
+            {selectedSessionKey ? (
+              deskPanel(
+                "Live Chat",
+                activeSessionCharacter?.name ?? "Current worker",
+                <div className="space-y-3 px-4 py-4">
+                  <div className="max-h-[340px] space-y-3 overflow-y-auto rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 p-3">
+                    {selectedHistory.slice(-8).map((message, index) => (
+                      <div
+                        key={`${message.id ?? index}-${message.ts ?? index}`}
+                        className={`rounded-lg border px-3 py-3 ${
+                          message.role === "user"
+                            ? "ml-auto max-w-[92%] border-blue-500/30 bg-blue-950/40 text-blue-50"
+                            : "mr-auto max-w-[92%] border-dunder-carpet/20 bg-dunder-screen-off/70 text-dunder-paper"
+                        }`}
+                      >
+                        <div className="mb-1 text-[10px] font-mono uppercase tracking-[0.2em] text-dunder-carpet">
+                          {message.role}
+                        </div>
+                        <div className="whitespace-pre-wrap text-sm leading-6">{textOf(message.content)}</div>
+                      </div>
+                    ))}
+                    {selectedStream ? (
+                      <div className="mr-auto max-w-[92%] rounded-lg border border-green-500/30 bg-green-950/20 px-3 py-3 text-green-50">
+                        <div className="mb-1 text-[10px] font-mono uppercase tracking-[0.2em]">
+                          {selectedStream.state}
+                        </div>
+                        <div className="whitespace-pre-wrap text-sm leading-6">
+                          {selectedStream.text || "Streaming response..."}
+                        </div>
+                      </div>
+                    ) : null}
+                    {selectedHistory.length === 0 && !selectedStream ? (
+                      <div className="rounded border border-dashed border-dunder-carpet/20 px-3 py-4 text-sm text-dunder-wall">
+                        {getVoiceLine(activeSessionCharacter, officeVoiceMode, "emptyState", "No transcript yet.")}
+                      </div>
+                    ) : null}
+                  </div>
+                  <textarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder={`Tell ${activeSessionCharacter?.name ?? activeSessionAgent?.name ?? "the worker"} what to do...`} className="min-h-24 w-full rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-3 font-dunder text-sm text-dunder-paper outline-none focus:border-dunder-wall" />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void sendMessage()} disabled={!composer.trim() || busyAction === "send-message"} className={buttonClasses("primary")}>
+                      {busyAction === "send-message" ? "Sending..." : "Send Job"}
+                    </button>
+                    <button type="button" onClick={() => setDeskFocus({ section: "sessions" })} className={buttonClasses()}>
+                      Open Full Desk
+                    </button>
+                  </div>
+                </div>,
+              )
+            ) : null}
+          </div>
+
+          <div className="space-y-4">
+            {deskPanel(
+              `${gatewayLabel.primary} Rail`,
+              gatewayLabel.technical,
+              <div className="space-y-2 px-4 py-4">
+                {instanceIds.map((instanceId) => {
+                  const instance = instances[instanceId];
+                  if (!instance) return null;
+                  const active = instanceId === currentInstanceId;
+                  return (
+                    <button
+                      key={instanceId}
+                      type="button"
+                      onClick={() => {
+                        setDeskFocus({ instanceId, section: "setup" });
+                        setActiveInstance(instanceId);
+                      }}
+                      className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${active ? "border-dunder-wall bg-dunder-paper/10" : "border-dunder-carpet/20 bg-dunder-paper/5 hover:bg-dunder-paper/10"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-dunder text-sm text-dunder-paper">{instance.label}</span>
+                        {statusChip(instance.status, instance.status === "connected" ? "good" : instance.status === "connecting" ? "warn" : instance.status === "error" ? "bad" : "neutral")}
+                      </div>
+                      <div className="mt-1 text-xs text-dunder-wall">{instance.url}</div>
+                    </button>
+                  );
+                })}
+                <button type="button" onClick={toggleAddInstance} className={`w-full ${buttonClasses()}`}>
+                  Connect Office
+                </button>
+              </div>,
+            )}
+
+            {deskPanel(
+              "Progress",
+              "Setup",
+              <div className="space-y-2 px-4 py-4 text-sm text-dunder-wall">
+                <div>{instanceIds.length > 0 ? "1. Office connected" : "1. Connect office"}</div>
+                <div>{currentAgents.length > 0 ? "2. Worker exists" : "2. Make worker"}</div>
+                <div>{hasCharacterOverride ? "3. Character picked" : "3. Character optional"}</div>
+                <div>{(currentOps?.sessions.length ?? 0) > 0 ? "4. Chat started" : "4. Start chat"}</div>
+              </div>,
+            )}
+
+            {currentOps?.sessions.length ? deskPanel(
+              "Recent Chats",
+              "History",
+              <div className="space-y-2 px-4 py-4">
+                {currentOps.sessions.slice(0, 6).map((session) => (
+                  <button key={session.key} type="button" onClick={() => { selectSession(currentInstanceId ?? "", session.key); setDeskFocus({ sessionKey: session.key, section: "setup" }); }} className="w-full rounded-lg border border-dunder-carpet/20 bg-dunder-paper/5 px-3 py-3 text-left transition-colors hover:bg-dunder-paper/10">
+                    <div className="font-dunder text-sm font-bold text-dunder-paper">{sessionTitle(session)}</div>
+                    <div className="mt-1 text-xs text-dunder-wall">{formatRelativeTime(session.updatedAt)}</div>
+                  </button>
+                ))}
+              </div>,
+            ) : null}
+
+            {uiMode === "idiot" ? deskPanel(
+              "Advanced Escape Hatch",
+              "Operator",
+              <div className="space-y-3 px-4 py-4 text-sm text-dunder-wall">
+                <div>If you insist on touching raw config, logs, approvals, nodes, or routing internals, switch the top bar to Advanced.</div>
+              </div>,
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   if (instanceIds.length === 0) return noGatewaysView;
+
+  if (uiMode === "idiot") return idiotModeView;
 
   const mainView =
     currentSection === "sessions" ? (

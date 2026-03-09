@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { useUIStore } from "../store/useUIStore";
+import { describeOfficeVoice } from "../characters/officeVoice";
 
 const MICHAEL_QUOTES = [
   '"Limitless paper in a paperless world"',
@@ -17,6 +18,10 @@ export function TopBar() {
   const instances = useGatewayStore((s) => s.instances);
   const activeId = useGatewayStore((s) => s.activeInstanceId);
   const openPanel = useUIStore((s) => s.openPanel);
+  const uiMode = useUIStore((s) => s.uiMode);
+  const officeVoiceMode = useUIStore((s) => s.officeVoiceMode);
+  const setUIMode = useUIStore((s) => s.setUIMode);
+  const setOfficeVoiceMode = useUIStore((s) => s.setOfficeVoiceMode);
   const hasConnections = Object.keys(instances).length > 0;
 
   const [quoteIndex, setQuoteIndex] = useState(0);
@@ -31,7 +36,7 @@ export function TopBar() {
   const activeInstance = activeId ? instances[activeId] : null;
 
   return (
-    <div className="h-12 shrink-0 bg-dunder-blue/90 border-b border-dunder-carpet/20 flex items-center px-4 gap-4">
+    <div className="flex h-16 shrink-0 items-center gap-4 border-b border-dunder-carpet/20 bg-dunder-blue/90 px-4">
       {/* Recording indicator */}
       <div className="flex items-center gap-2 shrink-0">
         <span
@@ -56,6 +61,62 @@ export function TopBar() {
         >
           {MICHAEL_QUOTES[quoteIndex]}
         </p>
+        <p className="mt-1 text-[10px] font-mono uppercase tracking-[0.22em] text-dunder-carpet">
+          {uiMode === "idiot" ? "Idiot Mode active" : "Advanced operator view"} · {describeOfficeVoice(officeVoiceMode)}
+        </p>
+      </div>
+
+      <div className="hidden shrink-0 gap-3 lg:flex">
+        <div className="rounded-lg border border-dunder-carpet/25 bg-dunder-paper/6 px-2 py-2">
+          <div className="px-1 text-[10px] font-mono uppercase tracking-[0.22em] text-dunder-carpet">
+            UI Mode
+          </div>
+          <div className="mt-2 flex gap-1">
+            <button
+              type="button"
+              onClick={() => setUIMode("idiot")}
+              className={`rounded-md px-3 py-1.5 font-dunder text-xs transition-colors ${
+                uiMode === "idiot"
+                  ? "border border-dunder-wall bg-dunder-paper text-dunder-blue"
+                  : "border border-dunder-carpet/25 bg-dunder-paper/8 text-dunder-paper hover:bg-dunder-paper/14"
+              }`}
+            >
+              Idiot Mode
+            </button>
+            <button
+              type="button"
+              onClick={() => setUIMode("advanced")}
+              className={`rounded-md px-3 py-1.5 font-dunder text-xs transition-colors ${
+                uiMode === "advanced"
+                  ? "border border-dunder-wall bg-dunder-paper text-dunder-blue"
+                  : "border border-dunder-carpet/25 bg-dunder-paper/8 text-dunder-paper hover:bg-dunder-paper/14"
+              }`}
+            >
+              Advanced
+            </button>
+          </div>
+        </div>
+        <div className="rounded-lg border border-dunder-carpet/25 bg-dunder-paper/6 px-2 py-2">
+          <div className="px-1 text-[10px] font-mono uppercase tracking-[0.22em] text-dunder-carpet">
+            Office Voice
+          </div>
+          <div className="mt-2 flex gap-1">
+            {(["off", "light", "full"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setOfficeVoiceMode(mode)}
+                className={`rounded-md px-3 py-1.5 font-dunder text-xs transition-colors ${
+                  officeVoiceMode === mode
+                    ? "border border-dunder-wall bg-dunder-paper text-dunder-blue"
+                    : "border border-dunder-carpet/25 bg-dunder-paper/8 text-dunder-paper hover:bg-dunder-paper/14"
+                }`}
+              >
+                {mode === "off" ? "Off" : mode === "light" ? "Light" : "Full"}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Manager / active instance */}

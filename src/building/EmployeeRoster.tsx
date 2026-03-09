@@ -1,8 +1,9 @@
+import { getConceptLabels } from "../characters/officeVoice";
+import { getCharacterById } from "../characters/registry";
 import { useAgentStore } from "../store/useAgentStore";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { useUIStore } from "../store/useUIStore";
 import { OperatorGuide } from "./OperatorGuide";
-import { getCharacterById } from "../characters/registry";
 
 const STATUS_COLORS: Record<string, string> = {
   idle: "bg-green-500",
@@ -28,24 +29,31 @@ export function EmployeeRoster() {
   const openPanel = useUIStore((s) => s.openPanel);
   const openDesk = useUIStore((s) => s.openDesk);
   const toggleAddInstance = useUIStore((s) => s.toggleAddInstance);
+  const uiMode = useUIStore((s) => s.uiMode);
+  const agentLabel = getConceptLabels(uiMode, "agent");
+  const gatewayLabel = getConceptLabels(uiMode, "gateway");
 
   const allAgents = Object.entries(agents).flatMap(([instanceId, instAgents]) =>
-    Object.values(instAgents).map((agent) => ({ ...agent, instanceId }))
+    Object.values(instAgents).map((agent) => ({ ...agent, instanceId })),
   );
 
   if (allAgents.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-4 text-center p-8">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
         <div className="text-5xl opacity-20">⊞</div>
-        <h2 className="text-xl font-dunder font-bold text-dunder-paper">No Agents on Duty</h2>
-        <p className="text-sm text-dunder-carpet font-dunder max-w-sm">
-          Connect to a gateway to see your agents appear here as Dunder Mifflin employees.
+        <h2 className="font-dunder text-xl font-bold text-dunder-paper">
+          {uiMode === "idiot" ? "No Workers Yet" : "No Agents on Duty"}
+        </h2>
+        <p className="max-w-sm font-dunder text-sm text-dunder-carpet">
+          {uiMode === "idiot"
+            ? `Connect an ${gatewayLabel.primary.toLowerCase()} to make workers show up here.`
+            : "Connect to a gateway to see your agents appear here as Dunder Mifflin employees."}
         </p>
         <button
           onClick={toggleAddInstance}
-          className="px-5 py-2.5 text-sm font-dunder text-dunder-paper bg-dunder-screen-on rounded hover:bg-blue-700 transition-colors"
+          className="rounded bg-dunder-screen-on px-5 py-2.5 text-sm font-dunder text-dunder-paper transition-colors hover:bg-blue-700"
         >
-          Connect Gateway
+          {uiMode === "idiot" ? "Connect Office" : "Connect Gateway"}
         </button>
       </div>
     );
@@ -53,17 +61,22 @@ export function EmployeeRoster() {
 
   return (
     <div className="h-full overflow-y-auto p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-dunder font-bold text-dunder-paper">Employee Roster</h1>
-          <p className="text-sm text-dunder-carpet mt-1 font-dunder">OpenClaw agents with Office character assignments</p>
+          <h1 className="font-dunder text-3xl font-bold text-dunder-paper">
+            {uiMode === "idiot" ? "Workers" : "Employee Roster"}
+          </h1>
+          <p className="mt-1 font-dunder text-sm text-dunder-carpet">
+            {uiMode === "idiot"
+              ? "Real workers, dressed as Office people."
+              : "OpenClaw agents with Office character assignments"}
+          </p>
         </div>
         <button
           onClick={toggleAddInstance}
-          className="px-4 py-2 text-xs font-dunder text-dunder-paper bg-dunder-screen-off border border-dunder-carpet/30 rounded hover:bg-dunder-paper/10 transition-colors"
+          className="rounded border border-dunder-carpet/30 bg-dunder-screen-off px-4 py-2 text-xs font-dunder text-dunder-paper transition-colors hover:bg-dunder-paper/10"
         >
-          + Add Gateway
+          {uiMode === "idiot" ? "+ Connect Office" : "+ Add Gateway"}
         </button>
       </div>
 
@@ -71,29 +84,48 @@ export function EmployeeRoster() {
         <OperatorGuide
           eyebrow="Roster Primer"
           title="What you are looking at"
-          summary="The roster shows real agents from your connected gateways, but it presents them as Office employees when a character is assigned. The big name is the character. The system identity stays with the underlying agent."
+          summary={
+            uiMode === "idiot"
+              ? "The big name is the Office character. The real worker is still underneath. Workers do the work. Characters add the flavor."
+              : "The roster shows real agents from your connected gateways, but it presents them as Office employees when a character is assigned. The big name is the character. The system identity stays with the underlying agent."
+          }
           terms={[
             {
-              term: "OpenClaw Agent",
-              definition: "The real runtime worker loaded from a gateway. Its identity is preserved even when you give it an Office character.",
+              term: uiMode === "idiot" ? agentLabel.primary : "OpenClaw Agent",
+              definition:
+                uiMode === "idiot"
+                  ? `The real worker that does the job. Technical label: ${agentLabel.technical}.`
+                  : "The real runtime worker loaded from a gateway. Its identity is preserved even when you give it an Office character.",
             },
             {
-              term: "Mission Control Character",
-              definition: "A visual and thematic role like Dwight or Pam. This affects the floor plan and roster presentation only.",
+              term: "Office Character",
+              definition:
+                uiMode === "idiot"
+                  ? "This is the costume and personality layer. It changes how the worker looks and sounds here."
+                  : "A visual and thematic role like Dwight or Pam. This affects the floor plan and roster presentation only.",
             },
           ]}
           steps={[
             {
-              title: "Connect or provision",
-              body: "Connected gateways contribute existing agents, and Gateway Workbench can provision new ones directly into that roster.",
+              title: uiMode === "idiot" ? "Connect an office" : "Connect or provision",
+              body:
+                uiMode === "idiot"
+                  ? `A connected ${gatewayLabel.primary.toLowerCase()} gives you real workers.`
+                  : "Connected gateways contribute existing agents, and Gateway Workbench can provision new ones directly into that roster.",
             },
             {
-              title: "Assign an Office character",
-              body: "Open Settings and use Character Mapping to cast an agent as Dwight, Pam, Jim, or another employee.",
+              title: uiMode === "idiot" ? "Pick a costume" : "Assign an Office character",
+              body:
+                uiMode === "idiot"
+                  ? "Use Settings if you want a worker to sound and look like Dwight, Pam, Jim, or someone else."
+                  : "Open Settings and use Character Mapping to cast an agent as Dwight, Pam, Jim, or another employee.",
             },
             {
-              title: "Create work in Session Desk",
-              body: "Use Session Desk when you want to create a session, choose the agent that runs it, and select the model or channel routing.",
+              title: uiMode === "idiot" ? "Start a chat" : "Create work in Session Desk",
+              body:
+                uiMode === "idiot"
+                  ? "Session Desk is where you tell a worker what to do."
+                  : "Use Session Desk when you want to create a session, choose the agent that runs it, and select the model or channel routing.",
             },
           ]}
           actions={(
@@ -103,22 +135,21 @@ export function EmployeeRoster() {
                 onClick={() => openPanel({ type: "settings" })}
                 className="rounded-md border border-dunder-carpet/25 bg-dunder-paper/8 px-3 py-2 text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/14"
               >
-                Character Mapping
+                {uiMode === "idiot" ? "Pick Character" : "Character Mapping"}
               </button>
               <button
                 type="button"
-                onClick={() => openDesk({ section: "sessions" })}
+                onClick={() => openDesk({ section: uiMode === "idiot" ? "setup" : "sessions" })}
                 className="rounded-md border border-dunder-paper/35 bg-dunder-paper/12 px-3 py-2 text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/18"
               >
-                Open Session Desk
+                {uiMode === "idiot" ? "Start Chat" : "Open Session Desk"}
               </button>
             </>
           )}
         />
       </div>
 
-      {/* Agent grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4">
         {allAgents.map((agent) => {
           const char = agent.characterId ? getCharacterById(agent.characterId) : null;
           const instanceLabel = instances[agent.instanceId]?.label ?? agent.instanceId;
@@ -130,79 +161,74 @@ export function EmployeeRoster() {
               onClick={() =>
                 openPanel({ type: "agent", instanceId: agent.instanceId, agentId: agent.agentId })
               }
-              className="bg-dunder-screen-off/60 border border-dunder-carpet/20 rounded-lg p-4 text-left hover:border-dunder-carpet/50 hover:bg-dunder-screen-off/80 transition-all group"
+              className="group rounded-lg border border-dunder-carpet/20 bg-dunder-screen-off/60 p-4 text-left transition-all hover:border-dunder-carpet/50 hover:bg-dunder-screen-off/80"
             >
-              {/* Avatar area */}
               <div className="relative mb-3 flex justify-center">
                 <div
-                  className="w-16 h-16 rounded-lg flex items-center justify-center text-3xl border border-dunder-carpet/20"
+                  className="flex h-16 w-16 items-center justify-center rounded-lg border border-dunder-carpet/20 text-3xl"
                   style={{ backgroundColor: char?.bodyColor ?? "#334155" }}
                 >
                   {char ? (
-                    <span className="text-2xl">
-                      {char.name.charAt(0)}
-                    </span>
+                    <span className="text-2xl">{char.name.charAt(0)}</span>
                   ) : (
-                    <span className="text-dunder-wall text-xl font-dunder font-bold">
+                    <span className="font-dunder text-xl font-bold text-dunder-wall">
                       {agent.agentId.charAt(0).toUpperCase()}
                     </span>
                   )}
                 </div>
-                {/* Status dot */}
                 <span
-                  className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-dunder-screen-off ${
+                  className={`absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-dunder-screen-off ${
                     STATUS_COLORS[agent.visualState] ?? "bg-gray-600"
                   }`}
                 />
               </div>
 
-              {/* Name + title */}
-              <div className="text-center mb-3">
-                <div className="text-sm font-dunder font-bold text-dunder-paper leading-tight">
+              <div className="mb-3 text-center">
+                <div className="text-sm font-dunder font-bold leading-tight text-dunder-paper">
                   {char?.name ?? agent.agentId}
                 </div>
-                <div className="text-[10px] text-dunder-carpet tracking-wider uppercase mt-0.5">
+                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-dunder-carpet">
                   {char?.title ?? instanceLabel}
                 </div>
-                <div className="mt-1 text-[10px] font-mono text-dunder-wall">
-                  Agent {agent.name}
+                <div className="mt-1 font-mono text-[10px] text-dunder-wall">
+                  {uiMode === "idiot" ? `Worker ${agent.name}` : `Agent ${agent.name}`}
                 </div>
               </div>
 
-              {/* Status badge */}
-              <div className="flex items-center justify-center mb-3">
+              <div className="mb-3 flex items-center justify-center">
                 <span
-                  className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
+                  className={`rounded-full px-2 py-0.5 font-mono text-[9px] ${
                     agent.visualState === "error"
                       ? "bg-red-900/50 text-red-400"
                       : agent.visualState === "offline"
-                      ? "bg-gray-800 text-gray-500"
-                      : agent.visualState === "idle"
-                      ? "bg-green-900/40 text-green-400"
-                      : "bg-blue-900/40 text-blue-400"
+                        ? "bg-gray-800 text-gray-500"
+                        : agent.visualState === "idle"
+                          ? "bg-green-900/40 text-green-400"
+                          : "bg-blue-900/40 text-blue-400"
                   }`}
                 >
                   {STATUS_LABELS[agent.visualState] ?? agent.visualState.toUpperCase()}
                 </span>
               </div>
 
-              {/* SYS_ID footer */}
-              <div className="flex items-center justify-between border-t border-dunder-carpet/10 pt-2 mt-1">
-                <span className="text-[9px] text-dunder-carpet font-mono">SYS_ID</span>
-                <span className="text-[9px] text-dunder-wall font-mono">{sysId}</span>
-              </div>
-
-              {/* Active tool or streaming text */}
-              {agent.activeTool && (
-                <div className="mt-1.5 text-[9px] text-purple-400 font-mono truncate">
-                  ⚙ {agent.activeTool}
-                </div>
-              )}
-              {agent.lastDeltaText && agent.visualState === "talking" && (
-                <div className="mt-1 text-[9px] text-dunder-carpet truncate">
-                  {agent.lastDeltaText}
-                </div>
-              )}
+              {uiMode !== "idiot" ? (
+                <>
+                  <div className="mt-1 flex items-center justify-between border-t border-dunder-carpet/10 pt-2">
+                    <span className="font-mono text-[9px] text-dunder-carpet">SYS_ID</span>
+                    <span className="font-mono text-[9px] text-dunder-wall">{sysId}</span>
+                  </div>
+                  {agent.activeTool ? (
+                    <div className="mt-1.5 truncate font-mono text-[9px] text-purple-400">
+                      Tool {agent.activeTool}
+                    </div>
+                  ) : null}
+                  {agent.lastDeltaText && agent.visualState === "talking" ? (
+                    <div className="mt-1 truncate text-[9px] text-dunder-carpet">
+                      {agent.lastDeltaText}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
             </button>
           );
         })}

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { getGatewayManager } from "../gateway/gatewayRef";
-import type { ChatHistoryMessage } from "../gateway/types";
+import { getVoiceLine } from "../characters/officeVoice";
 import { getCharacterById } from "../characters/registry";
+import { getGatewayManager } from "../gateway/gatewayRef";
+import { ensureSessionOfficeVoice } from "../gateway/sessionOfficeVoice";
+import type { ChatHistoryMessage } from "../gateway/types";
 import { useAgentStore } from "../store/useAgentStore";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { decodeHistoryPayload, useOpsStore } from "../store/useOpsStore";
@@ -35,13 +37,17 @@ export function ChatPanel({ instanceId, agentId }: Props) {
   const ops = useOpsStore((state) => state.instances[instanceId]);
   const setHistory = useOpsStore((state) => state.setHistory);
   const selectSession = useOpsStore((state) => state.selectSession);
+  const setSessionPersonaState = useOpsStore((state) => state.setSessionPersonaState);
   const closePanel = useUIStore((state) => state.closePanel);
   const openPanel = useUIStore((state) => state.openPanel);
   const openDesk = useUIStore((state) => state.openDesk);
+  const uiMode = useUIStore((state) => state.uiMode);
+  const officeVoiceMode = useUIStore((state) => state.officeVoiceMode);
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const defaultAgentId = gateway?.defaultAgentId ?? null;
   const sessionsForAgent = (ops?.sessions ?? []).filter(
@@ -56,7 +62,20 @@ export function ChatPanel({ instanceId, agentId }: Props) {
   const stream = selectedSessionKey ? ops?.sessionStreams[selectedSessionKey] : undefined;
   const needsRefresh =
     selectedSessionKey && ops?.historyNeedsRefresh[selectedSessionKey];
+  const personaState = selectedSessionKey ? ops?.sessionPersonas[selectedSessionKey] : undefined;
   const character = agent?.characterId ? getCharacterById(agent.characterId) : null;
+  const greeting = getVoiceLine(
+    character,
+    officeVoiceMode,
+    "greeting",
+    "Session chat is ready.",
+  );
+  const emptyState = getVoiceLine(
+    character,
+    officeVoiceMode,
+    "emptyState",
+    "No transcript loaded yet.",
+  );
 
   useEffect(() => {
     if (!selectedSessionKey) return;
@@ -70,11 +89,14 @@ export function ChatPanel({ instanceId, agentId }: Props) {
     if (!client) return;
 
     let cancelled = false;
-    void client.chatHistory(selectedSessionKey, 80).then((result) => {
-      if (!cancelled) {
-        setHistory(instanceId, selectedSessionKey, decodeHistoryPayload(result.messages));
-      }
-    }).catch(() => undefined);
+    void client
+      .chatHistory(selectedSessionKey, 80)
+      .then((result) => {
+        if (!cancelled) {
+          setHistory(instanceId, selectedSessionKey, decodeHistoryPayload(result.messages));
+        }
+      })
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
@@ -93,12 +115,27 @@ export function ChatPanel({ instanceId, agentId }: Props) {
     setInput("");
     setBusy(true);
     setError(null);
+    setNotice(null);
 
     try {
       setHistory(instanceId, selectedSessionKey, [
         ...history,
         { role: "user", content: message, ts: Date.now() },
       ]);
+
+      const voiceResult = await ensureSessionOfficeVoice({
+        client,
+        methods: ops?.capabilities.methods,
+        sessionKey: selectedSessionKey,
+        characterId: character?.id,
+        voiceMode: officeVoiceMode,
+        currentState: personaState,
+        onState: (state) => setSessionPersonaState(instanceId, selectedSessionKey, state),
+      });
+      if (voiceResult.message) {
+        setNotice(voiceResult.message);
+      }
+
       await client.chatSend({
         sessionKey: selectedSessionKey,
         message,
@@ -126,41 +163,51 @@ export function ChatPanel({ instanceId, agentId }: Props) {
       <div className="border-b border-dunder-carpet/20 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <button type="button" onClick={() => openPanel({ type: "agent", instanceId, agentId })} className="text-xs uppercase tracking-[0.18em] text-dunder-carpet transition-colors hover:text-dunder-paper">
-              Back To Agent
+            <button
+              type="button"
+              onClick={() => openPanel({ type: "agent", instanceId, agentId })}
+              className="text-xs uppercase tracking-[0.18em] text-dunder-carpet transition-colors hover:text-dunder-paper"
+            >
+              Back To {uiMode === "idiot" ? "Worker" : "Agent"}
             </button>
             <div className="mt-2 font-dunder text-lg font-bold">
               {character?.name ?? agent.name}
             </div>
             <div className="text-xs text-dunder-wall">
-              {selectedSessionKey ?? "No live session assigned"}
+              {selectedSessionKey ?? (uiMode === "idiot" ? "No chat assigned yet" : "No live session assigned")}
             </div>
           </div>
-          <button type="button" onClick={closePanel} className="text-xl leading-none text-dunder-wall transition-colors hover:text-dunder-paper">
+          <button
+            type="button"
+            onClick={closePanel}
+            className="text-xl leading-none text-dunder-wall transition-colors hover:text-dunder-paper"
+          >
             &times;
           </button>
         </div>
         {selectedSessionKey ? (
           <div className="mt-3 rounded border border-green-500/20 bg-green-500/10 px-3 py-2 text-xs text-green-200">
-            Gateway-backed session chat is active.
+            {greeting}
           </div>
         ) : (
           <div className="mt-3 rounded border border-amber-400/20 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
-            This panel no longer invents local sessions. Create or assign one in Session Desk first.
+            {uiMode === "idiot"
+              ? "False. There is no chat here yet. Start one in Session Desk first."
+              : "This panel no longer invents local sessions. Create or assign one in Session Desk first."}
             <div className="mt-3">
               <button
                 type="button"
-                onClick={() => openDesk({ instanceId, section: "sessions", agentId })}
+                onClick={() => openDesk({ instanceId, section: uiMode === "idiot" ? "setup" : "sessions", agentId })}
                 className="rounded border border-amber-400/30 px-3 py-2 font-dunder text-xs uppercase tracking-[0.18em] text-amber-100 transition-colors hover:bg-amber-400/10"
               >
-                Open Session Desk
+                {uiMode === "idiot" ? "Open Start Chat" : "Open Session Desk"}
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {selectedSessionKey && (
+      {selectedSessionKey ? (
         <>
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
             {history.map((message, index) => (
@@ -182,7 +229,7 @@ export function ChatPanel({ instanceId, agentId }: Props) {
                 </div>
               </div>
             ))}
-            {stream && (
+            {stream ? (
               <div className="mr-auto max-w-[88%] rounded-xl border border-green-500/30 bg-green-950/20 px-3 py-3 text-green-50">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.2em]">
                   {stream.state}
@@ -191,34 +238,41 @@ export function ChatPanel({ instanceId, agentId }: Props) {
                   {stream.text || "Streaming response..."}
                 </div>
               </div>
-            )}
-            {history.length === 0 && !stream && (
+            ) : null}
+            {history.length === 0 && !stream ? (
               <div className="rounded border border-dashed border-dunder-carpet/20 px-3 py-4 text-sm text-dunder-wall">
-                No transcript loaded yet.
+                {emptyState}
               </div>
-            )}
+            ) : null}
           </div>
 
-          {error && (
+          {notice ? (
+            <div className="border-t border-blue-500/20 bg-blue-950/30 px-4 py-2 text-sm text-blue-200">
+              {notice}
+            </div>
+          ) : null}
+          {error ? (
             <div className="border-t border-red-500/20 bg-red-950/30 px-4 py-2 text-sm text-red-200">
               {error}
             </div>
-          )}
+          ) : null}
 
           <div className="border-t border-dunder-carpet/20 p-4">
             <textarea
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={`Message ${character?.name ?? agent.name}...`}
+              placeholder={uiMode === "idiot"
+                ? `Tell ${character?.name ?? agent.name} exactly what to do...`
+                : `Message ${character?.name ?? agent.name}...`}
               className="min-h-24 w-full rounded border border-dunder-carpet/30 bg-dunder-screen-off/70 px-3 py-3 font-dunder text-sm text-dunder-paper outline-none transition-colors focus:border-dunder-wall"
             />
             <div className="mt-3 flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => openDesk({ instanceId, section: "sessions", sessionKey: selectedSessionKey, agentId })}
+                onClick={() => openDesk({ instanceId, section: uiMode === "idiot" ? "setup" : "sessions", sessionKey: selectedSessionKey, agentId })}
                 className="rounded border border-dunder-carpet/30 px-3 py-2 font-dunder text-xs uppercase tracking-[0.18em] text-dunder-paper transition-colors hover:bg-dunder-paper/10"
               >
-                Open Full Desk
+                {uiMode === "idiot" ? "Open Start Chat" : "Open Full Desk"}
               </button>
               <button
                 type="button"
@@ -226,12 +280,12 @@ export function ChatPanel({ instanceId, agentId }: Props) {
                 disabled={!input.trim() || busy}
                 className="rounded border border-dunder-wall bg-dunder-paper px-3 py-2 font-dunder text-xs uppercase tracking-[0.18em] text-dunder-blue transition-colors hover:bg-dunder-wall disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {busy ? "Sending..." : "Send"}
+                {busy ? "Sending..." : uiMode === "idiot" ? "Send Job" : "Send"}
               </button>
             </div>
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }
