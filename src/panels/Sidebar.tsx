@@ -46,14 +46,14 @@ export function Sidebar() {
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className={
               isMobile
-                ? "fixed bottom-0 left-0 right-0 h-[70vh] bg-gray-900 border-t border-gray-700 shadow-2xl overflow-y-auto z-50 rounded-t-xl"
-                : "fixed right-0 top-0 h-full w-80 bg-gray-900 border-l border-gray-700 shadow-2xl overflow-y-auto z-50"
+                ? "fixed bottom-0 left-0 right-0 h-[70vh] bg-dunder-blue border-t border-dunder-carpet/30 shadow-2xl overflow-y-auto z-50 rounded-t-xl"
+                : "fixed right-0 top-0 h-full w-80 bg-dunder-blue border-l border-dunder-carpet/30 shadow-2xl overflow-y-auto z-50"
             }
           >
             {/* Swipe handle on mobile */}
             {isMobile && (
-              <div className="sticky top-0 bg-gray-900 pt-2 pb-1 flex justify-center z-10">
-                <div className="w-10 h-1 rounded-full bg-gray-600" />
+              <div className="sticky top-0 bg-dunder-blue pt-2 pb-1 flex justify-center z-10">
+                <div className="w-10 h-1 rounded-full bg-dunder-carpet/60" />
               </div>
             )}
             {panel.type === "agent" && (

@@ -188,7 +188,7 @@ export function Dashboard({ onConnect }: Props) {
           ⌖ View Floor Plan
         </button>
         <button
-          onClick={() => setActivePage("ops")}
+          onClick={() => setActivePage("desk")}
           className="px-4 py-2 text-xs font-dunder text-dunder-paper bg-dunder-screen-off/60 border border-dunder-carpet/30 rounded hover:bg-dunder-paper/10 transition-colors"
         >
           ⌁ AI Operations

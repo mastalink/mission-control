@@ -8,7 +8,7 @@ import { TopBar } from "./building/TopBar";
 import { Dashboard } from "./building/Dashboard";
 import { FloorPlanPage } from "./building/FloorPlanPage";
 import { EmployeeRoster } from "./building/EmployeeRoster";
-import { SabreTerminal } from "./building/SabreTerminal";
+import { SessionDesk } from "./building/SessionDesk";
 import { SplashScreen } from "./building/SplashScreen";
 import { Sidebar } from "./panels/Sidebar";
 import { AddInstanceDialog } from "./building/AddInstanceDialog";
@@ -41,7 +41,7 @@ export function App() {
           {activePage === "dashboard"  && <Dashboard onConnect={connect} />}
           {activePage === "floorplan"  && <FloorPlanPage />}
           {activePage === "roster"     && <EmployeeRoster />}
-          {activePage === "ops"        && <SabreTerminal />}
+          {activePage === "desk"       && <SessionDesk />}
 
           {/* Right side panel (agent detail, chat, etc.) */}
           <Sidebar />

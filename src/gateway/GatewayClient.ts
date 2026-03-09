@@ -2,13 +2,29 @@ import type {
   AgentIdentityResult,
   AgentsListResult,
   ChannelsStatusResult,
-  ChatHistoryMessage,
+  ChatHistoryResult,
+  ChatSendResult,
+  ConfigMutationResult,
+  ConfigSchemaLookupResult,
+  ConfigSchemaResult,
+  ConfigSnapshotResult,
   CronStatus,
+  ExecApprovalDecision,
+  ExecApprovalsSnapshot,
   EventFrame,
   GatewayError,
   GatewayHelloOk,
+  GatewayStatusResult,
+  HealthStatusResult,
+  LogsTailResult,
+  ModelsListResult,
+  NodeListResult,
+  NodePairListResult,
   ResponseFrame,
+  SessionDetail,
   SessionEntry,
+  SessionsListResult,
+  SessionsPreviewResult,
 } from "./types";
 import { buildConnectRequestParams, normalizeGatewayUrl } from "./connectionUtils";
 
@@ -104,15 +120,57 @@ export class GatewayClient {
     limit?: number;
     includeDerivedTitles?: boolean;
     includeLastMessage?: boolean;
-  }): Promise<{ sessions: SessionEntry[] }> {
-    return this.request("sessions.list", { limit: 50, includeDerivedTitles: true, ...params });
+    includeGlobal?: boolean;
+    includeUnknown?: boolean;
+    activeMinutes?: number;
+    query?: string;
+  }): Promise<SessionsListResult> {
+    return this.request("sessions.list", {
+      limit: 50,
+      includeDerivedTitles: true,
+      includeGlobal: true,
+      includeUnknown: false,
+      ...params,
+    });
+  }
+
+  async fetchSessionsPreview(keys: string[]): Promise<SessionsPreviewResult> {
+    return this.request("sessions.preview", { keys });
+  }
+
+  async fetchSessionDetail(key: string): Promise<SessionDetail> {
+    return this.request("sessions.get", { key });
+  }
+
+  async patchSession(params: {
+    key: string;
+    thinkingLevel?: string | null;
+    verboseLevel?: string | null;
+    model?: string | null;
+    sendPolicy?: string | null;
+    groupActivation?: string | null;
+    label?: string | null;
+  }): Promise<{ ok: true; key: string; entry?: SessionEntry }> {
+    return this.request("sessions.patch", params);
+  }
+
+  async resetSession(key: string): Promise<{ ok: true; key: string }> {
+    return this.request("sessions.reset", { key });
+  }
+
+  async compactSession(key: string, maxLines = 400): Promise<{ ok: true; key: string }> {
+    return this.request("sessions.compact", { key, maxLines }, 60_000);
+  }
+
+  async deleteSession(key: string, deleteTranscript = true): Promise<{ ok: true; key: string }> {
+    return this.request("sessions.delete", { key, deleteTranscript });
   }
 
   async fetchCronStatus(): Promise<CronStatus> {
     return this.request("cron.status", {});
   }
 
-  async fetchHealth(probe = false): Promise<unknown> {
+  async fetchHealth(probe = false): Promise<HealthStatusResult> {
     return this.request("health", { probe });
   }
 
@@ -120,18 +178,28 @@ export class GatewayClient {
   async chatSend(params: {
     sessionKey: string;
     message: string;
+    thinking?: string;
+    attachments?: Array<Record<string, unknown>>;
+    timeoutMs?: number;
     idempotencyKey?: string;
-  }): Promise<{ runId: string }> {
+  }): Promise<ChatSendResult> {
     return this.request("chat.send", {
       sessionKey: params.sessionKey,
       message: params.message,
+      thinking: params.thinking,
+      attachments: params.attachments,
+      timeoutMs: params.timeoutMs,
       idempotencyKey: params.idempotencyKey ?? crypto.randomUUID(),
     });
   }
 
   /** Fetch chat history for a session */
-  async chatHistory(sessionKey: string, limit = 50): Promise<{ messages: ChatHistoryMessage[] }> {
+  async chatHistory(sessionKey: string, limit = 50): Promise<ChatHistoryResult> {
     return this.request("chat.history", { sessionKey, limit });
+  }
+
+  async chatAbort(sessionKey: string, runId: string): Promise<{ ok: boolean }> {
+    return this.request("chat.abort", { sessionKey, runId });
   }
 
   /** Invoke an agent with personality injection via extraSystemPrompt */
@@ -150,6 +218,116 @@ export class GatewayClient {
       deliver: false,
       idempotencyKey: params.idempotencyKey ?? crypto.randomUUID(),
     }, 60_000);
+  }
+
+  async fetchStatus(): Promise<GatewayStatusResult> {
+    return this.request("status", {});
+  }
+
+  async fetchModelsList(): Promise<ModelsListResult> {
+    return this.request("models.list", {});
+  }
+
+  async fetchConfig(): Promise<ConfigSnapshotResult> {
+    return this.request("config.get", {});
+  }
+
+  async fetchConfigSchema(): Promise<ConfigSchemaResult> {
+    return this.request("config.schema", {});
+  }
+
+  async lookupConfigSchema(path: string): Promise<ConfigSchemaLookupResult> {
+    return this.request("config.schema.lookup", { path });
+  }
+
+  async setConfig(params: {
+    raw: string;
+    baseHash?: string;
+    sessionKey?: string;
+    note?: string;
+  }): Promise<ConfigMutationResult> {
+    return this.request("config.set", params, 60_000);
+  }
+
+  async patchConfig(params: {
+    raw: string;
+    baseHash?: string;
+    sessionKey?: string;
+    note?: string;
+    restartDelayMs?: number;
+  }): Promise<ConfigMutationResult> {
+    return this.request("config.patch", params, 60_000);
+  }
+
+  async applyConfig(params: {
+    raw: string;
+    baseHash?: string;
+    sessionKey?: string;
+    note?: string;
+    restartDelayMs?: number;
+  }): Promise<ConfigMutationResult> {
+    return this.request("config.apply", params, 60_000);
+  }
+
+  async fetchNodes(): Promise<NodeListResult> {
+    return this.request("node.list", {});
+  }
+
+  async fetchNodePairList(): Promise<NodePairListResult> {
+    return this.request("node.pair.list", {});
+  }
+
+  async approveNodePair(requestId: string): Promise<Record<string, unknown>> {
+    return this.request("node.pair.approve", { requestId });
+  }
+
+  async rejectNodePair(requestId: string): Promise<Record<string, unknown>> {
+    return this.request("node.pair.reject", { requestId });
+  }
+
+  async fetchExecApprovals(nodeId?: string): Promise<ExecApprovalsSnapshot> {
+    return this.request(nodeId ? "exec.approvals.node.get" : "exec.approvals.get", nodeId ? { nodeId } : {});
+  }
+
+  async setExecApprovals(params: {
+    file: Record<string, unknown>;
+    baseHash: string;
+    nodeId?: string;
+  }): Promise<ExecApprovalsSnapshot> {
+    const { nodeId, ...rest } = params;
+    return this.request(nodeId ? "exec.approvals.node.set" : "exec.approvals.set", nodeId ? { nodeId, ...rest } : rest, 60_000);
+  }
+
+  async resolveExecApproval(params: {
+    approvalId: string;
+    decision: ExecApprovalDecision;
+    remember?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return this.request("exec.approval.resolve", params);
+  }
+
+  async fetchLogs(cursor?: number, limit = 200, maxBytes = 250_000): Promise<LogsTailResult> {
+    return this.request("logs.tail", { cursor, limit, maxBytes }, 30_000);
+  }
+
+  async fetchSystemPresence(): Promise<{ presence?: Array<Record<string, unknown>> }> {
+    return this.request("system-presence", {});
+  }
+
+  async runUpdate(params?: { sessionKey?: string; note?: string; restartDelayMs?: number }): Promise<Record<string, unknown>> {
+    return this.request("update.run", params ?? {}, 120_000);
+  }
+
+  async cronList(): Promise<Record<string, unknown>> {
+    return this.request("cron.list", {});
+  }
+
+  async cronRuns(jobId: string, limit = 20): Promise<Record<string, unknown>> {
+    return this.request("cron.runs", { jobId, limit });
+  }
+
+  async cronRun(jobId: string): Promise<Record<string, unknown>> {
+    return this.request("cron.run", { jobId }, 60_000);
   }
 
   // ── Private ────────────────────────────────────────────
@@ -193,13 +371,9 @@ export class GatewayClient {
     }
   }
 
-  private connectNonce: string | null = null;
-
   private handleEvent(evt: EventFrame): void {
     if (evt.event === "connect.challenge") {
-      // Extract nonce from challenge and proceed with connect handshake
-      const payload = evt.payload as { nonce?: string } | undefined;
-      this.connectNonce = payload?.nonce ?? null;
+      // Browser clients do not perform signed device auth; proceed with connect.
       this.sendConnect();
       return;
     }

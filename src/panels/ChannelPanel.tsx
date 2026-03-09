@@ -17,6 +17,7 @@ function timeAgo(ts: number | null): string {
 export function ChannelPanel({ instanceId, channelId }: Props) {
   const channel = useChannelStore((s) => s.channels[instanceId]?.[channelId]);
   const closePanel = useUIStore((s) => s.closePanel);
+  const openDesk = useUIStore((s) => s.openDesk);
 
   if (!channel) {
     return (
@@ -43,6 +44,12 @@ export function ChannelPanel({ instanceId, channelId }: Props) {
           <span className="text-sm text-gray-200">{channel.connected ? "Connected" : "Disconnected"}</span>
         </div>
       </div>
+      <button
+        onClick={() => openDesk({ instanceId, section: "workbench", channelId })}
+        className="w-full py-2.5 bg-dunder-paper/10 hover:bg-dunder-paper/20 text-dunder-paper text-sm font-dunder rounded-lg transition-colors border border-dunder-carpet/30"
+      >
+        Open Desk Workbench
+      </button>
 
       <div className="bg-gray-800 rounded-lg p-3 space-y-2">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Activity</h3>

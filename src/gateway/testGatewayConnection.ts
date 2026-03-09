@@ -66,7 +66,6 @@ export async function testGatewayConnection(
       }
 
       if (frame.type === "event" && frame.event === "connect.challenge") {
-        const payload = frame.payload as { nonce?: string } | undefined;
         const params = buildConnectRequestParams({
           instanceId: `connection-test-${Date.now()}`,
           token: input.token,

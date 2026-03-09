@@ -25,6 +25,7 @@ export function AgentPanel({ instanceId, agentId }: Props) {
   const agent = useAgentStore((s) => s.agents[instanceId]?.[agentId]);
   const closePanel = useUIStore((s) => s.closePanel);
   const openPanel = useUIStore((s) => s.openPanel);
+  const openDesk = useUIStore((s) => s.openDesk);
 
   if (!agent) {
     return (
@@ -89,6 +90,12 @@ export function AgentPanel({ instanceId, agentId }: Props) {
       >
         <span>💬</span>
         Chat with {character?.name ?? agent.name}
+      </button>
+      <button
+        onClick={() => openDesk({ instanceId, section: "sessions", agentId })}
+        className="w-full py-2.5 bg-dunder-paper/10 hover:bg-dunder-paper/20 text-dunder-paper text-sm font-dunder rounded-lg transition-colors border border-dunder-carpet/30"
+      >
+        Open Session Desk
       </button>
 
       {/* Status Banner */}

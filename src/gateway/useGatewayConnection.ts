@@ -4,9 +4,11 @@ import { setGatewayManager } from "./gatewayRef";
 import { useGatewayStore } from "../store/useGatewayStore";
 import { useAgentStore } from "../store/useAgentStore";
 import { useChannelStore } from "../store/useChannelStore";
+import { useOpsStore } from "../store/useOpsStore";
 import { autoAssignCharacters } from "../characters/mapping";
 import { getCharacterById } from "../characters/registry";
 import { normalizeGatewayUrl } from "./connectionUtils";
+import type { HealthStatusResult, SessionsListResult } from "./types";
 
 /**
  * React hook that manages the GatewayManager lifecycle,
@@ -18,10 +20,21 @@ import { normalizeGatewayUrl } from "./connectionUtils";
 export function useGatewayConnection() {
   const managerRef = useRef<GatewayManager | null>(null);
 
+  const cleanupInstanceState = useCallback((instanceId: string) => {
+    useGatewayStore.getState().removeInstance(instanceId);
+    useAgentStore.getState().removeInstance(instanceId);
+    useChannelStore.getState().removeInstance(instanceId);
+    useOpsStore.getState().removeInstance(instanceId);
+  }, []);
+
   useEffect(() => {
     const manager = new GatewayManager({
       onConnected: (instanceId, hello) => {
         useGatewayStore.getState().setConnected(instanceId, hello);
+        useOpsStore.getState().setGatewayCapabilities(instanceId, {
+          methods: hello.features?.methods ?? [],
+          events: hello.features?.events ?? [],
+        });
       },
       onDisconnected: (instanceId, info) => {
         useGatewayStore.getState().setDisconnected(instanceId, info.code !== 1000 ? info.reason : undefined);
@@ -52,26 +65,48 @@ export function useGatewayConnection() {
       onChannelsStatus: (instanceId, result) => {
         useChannelStore.getState().setChannels(instanceId, result);
       },
-      onCronStatus: () => {
-        // TODO: cron store
+      onCronStatus: (instanceId, result) => {
+        useOpsStore.getState().setCron(instanceId, result);
       },
-      onSessionsList: () => {
-        // TODO: sessions store
+      onSessionsList: (instanceId, result) => {
+        useOpsStore.getState().setSessions(instanceId, result as SessionsListResult);
       },
       onChatEvent: (instanceId, event) => {
         useAgentStore.getState().updateFromChatEvent(instanceId, event);
+        useOpsStore.getState().updateFromChatEvent(instanceId, event);
       },
       onAgentEvent: (instanceId, event) => {
         useAgentStore.getState().updateFromAgentEvent(instanceId, event);
       },
-      onPresence: () => {
-        // TODO: presence store
+      onPresence: (instanceId, entries) => {
+        useOpsStore.getState().setPresence(
+          instanceId,
+          entries.map((entry) => ({ ...entry })),
+        );
       },
-      onHealthEvent: () => {
-        // TODO: health updates
+      onHealthEvent: (instanceId, payload) => {
+        useOpsStore.getState().setHealth(
+          instanceId,
+          payload && typeof payload === "object"
+            ? ({ ...(payload as Record<string, unknown>) } as HealthStatusResult)
+            : { ok: true },
+        );
       },
       onCronEvent: () => {
         // TODO: cron updates
+      },
+      onExecApprovalRequested: (instanceId, payload) => {
+        const approvalId =
+          payload.approvalId ??
+          (payload.raw?.approvalId as string | undefined) ??
+          crypto.randomUUID();
+        useOpsStore.getState().pushApprovalRequest(instanceId, {
+          ...payload,
+          approvalId,
+        });
+      },
+      onNodePairUpdate: () => {
+        // Session Desk polls node.pair.list when open; event routing can stay best-effort.
       },
     });
 
@@ -89,6 +124,7 @@ export function useGatewayConnection() {
     const gwStore = useGatewayStore.getState();
     gwStore.addInstance({ instanceId: config.instanceId, label: config.label, url: normalizedUrl });
     gwStore.setConnecting(config.instanceId);
+    useOpsStore.getState().ensureInstance(config.instanceId);
     // Persist this connection so it auto-reconnects on next load
     gwStore.saveConnection({
       instanceId: config.instanceId,
@@ -106,11 +142,11 @@ export function useGatewayConnection() {
    */
   const disconnect = useCallback((instanceId: string, options?: { forget?: boolean }) => {
     managerRef.current?.disconnect(instanceId);
-    useGatewayStore.getState().removeInstance(instanceId);
+    cleanupInstanceState(instanceId);
     if (options?.forget) {
       useGatewayStore.getState().removeSavedConnection(instanceId);
     }
-  }, []);
+  }, [cleanupInstanceState]);
 
   /**
    * Reconnect all previously saved connections.
@@ -127,6 +163,7 @@ export function useGatewayConnection() {
       if (gwStore.instances[conn.instanceId]?.status === "connected") continue;
       gwStore.addInstance({ instanceId: conn.instanceId, label: conn.label, url: conn.url });
       gwStore.setConnecting(conn.instanceId);
+      useOpsStore.getState().ensureInstance(conn.instanceId);
       managerRef.current?.connect(conn);
     }
   }, []);

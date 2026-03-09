@@ -30,6 +30,7 @@ export function InstancePanel({ instanceId }: Props) {
   const channels = useChannelStore((s) => s.channels[instanceId]);
   const closePanel = useUIStore((s) => s.closePanel);
   const openPanel = useUIStore((s) => s.openPanel);
+  const openDesk = useUIStore((s) => s.openDesk);
 
   if (!instance) {
     return (
@@ -106,6 +107,12 @@ export function InstancePanel({ instanceId }: Props) {
           <p className="text-xs text-gray-500">Errors</p>
         </div>
       </div>
+      <button
+        onClick={() => openDesk({ instanceId, section: "sessions" })}
+        className="w-full py-2.5 bg-dunder-paper/10 hover:bg-dunder-paper/20 text-dunder-paper text-sm font-dunder rounded-lg transition-colors border border-dunder-carpet/30"
+      >
+        Open Session Desk
+      </button>
 
       {/* Agent Roster */}
       <div className="bg-gray-800/50 rounded-lg p-3 space-y-2">

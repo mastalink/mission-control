@@ -167,28 +167,49 @@ export type ChannelsStatusResult = {
 // Session entry from sessions.list
 export type SessionEntry = {
   key: string;
+  sessionId?: string;
   kind?: "direct" | "group" | "global" | "unknown";
   displayName?: string;
+  label?: string;
+  surface?: string;
+  subject?: string;
+  room?: string;
+  space?: string;
   derivedTitle?: string;
   lastMessagePreview?: string;
   updatedAt?: number;
+  systemSent?: boolean;
   abortedLastRun?: boolean;
   model?: string;
   thinkingLevel?: string;
+  verboseLevel?: string;
+  sendPolicy?: string;
+  groupActivation?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  contextTokens?: number;
 };
 
 // Chat history message from chat.history
 export type ChatHistoryMessage = {
   role: "user" | "assistant" | "system";
-  content: string;
+  content: string | Array<Record<string, unknown>>;
   ts?: number;
+  timestamp?: number;
+  id?: string;
   runId?: string;
   agentId?: string;
+  toolCallId?: string;
+  toolName?: string;
+  model?: string;
+  state?: string;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
   };
+  stopReason?: string;
 };
 
 // Cron job
@@ -208,4 +229,210 @@ export type CronStatus = {
   enabled: boolean;
   jobs: CronJob[];
   nextWakeAtMs?: number;
+};
+
+export type SessionDefaults = {
+  model?: string;
+  contextTokens?: number;
+};
+
+export type SessionsListResult = {
+  ts?: number;
+  path?: string;
+  count?: number;
+  defaults?: SessionDefaults;
+  sessions: SessionEntry[];
+};
+
+export type SessionPreviewItem = {
+  role: string;
+  text: string;
+};
+
+export type SessionPreviewEntry = {
+  key: string;
+  status: string;
+  items: SessionPreviewItem[];
+};
+
+export type SessionsPreviewResult = {
+  ts: number;
+  previews: SessionPreviewEntry[];
+};
+
+export type SessionDetail = {
+  key: string;
+  sessionId?: string;
+  thinkingLevel?: string;
+  verboseLevel?: string;
+  model?: string;
+  sendPolicy?: string;
+  groupActivation?: string;
+  label?: string;
+  displayName?: string;
+  derivedTitle?: string;
+  contextTokens?: number;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  origin?: Record<string, unknown>;
+  delivery?: Record<string, unknown>;
+  session?: Record<string, unknown>;
+  raw?: Record<string, unknown>;
+};
+
+export type ChatHistoryResult = {
+  sessionKey: string;
+  sessionId?: string;
+  messages?: Array<Record<string, unknown>>;
+  thinkingLevel?: string;
+};
+
+export type ChatSendResult = {
+  runId: string;
+  status: string;
+};
+
+export type ModelCatalogEntry = {
+  ref: string;
+  alias?: string;
+  provider?: string;
+  label?: string;
+  reasoning?: boolean;
+  available?: boolean;
+  multimodal?: boolean;
+  deprecated?: boolean;
+  raw?: Record<string, unknown>;
+};
+
+export type ModelsListResult = {
+  defaults?: {
+    model?: string;
+  };
+  models?: ModelCatalogEntry[];
+  refs?: string[];
+  snapshot?: Record<string, unknown>;
+  raw?: Record<string, unknown>;
+};
+
+export type GatewayStatusResult = {
+  ok?: boolean;
+  ts?: number;
+  version?: string;
+  build?: string;
+  uptimeMs?: number;
+  updateAvailable?: {
+    currentVersion?: string;
+    latestVersion?: string;
+    channel?: string;
+  } | null;
+  raw?: Record<string, unknown>;
+};
+
+export type HealthStatusResult = {
+  ok?: boolean;
+  checks?: Record<string, unknown>;
+  summary?: string;
+  raw?: Record<string, unknown>;
+};
+
+export type ConfigSnapshotResult = {
+  path?: string;
+  hash?: string;
+  format?: string;
+  config?: Record<string, unknown>;
+  redactedPaths?: string[];
+  raw?: string;
+};
+
+export type ConfigSchemaResult = {
+  schema: Record<string, unknown>;
+};
+
+export type ConfigMutationResult = {
+  ok?: boolean;
+  path?: string;
+  hash?: string;
+  restartScheduled?: boolean;
+  restartDelayMs?: number;
+  note?: string;
+  changedPaths?: string[];
+  raw?: Record<string, unknown>;
+};
+
+export type ConfigSchemaLookupResult = {
+  path: string;
+  node: Record<string, unknown>;
+};
+
+export type NodeState = {
+  nodeId: string;
+  displayName?: string;
+  platform?: string;
+  version?: string;
+  coreVersion?: string;
+  uiVersion?: string;
+  deviceFamily?: string;
+  modelIdentifier?: string;
+  remoteIp?: string;
+  caps?: string[];
+  commands?: string[];
+  permissions?: Record<string, boolean>;
+  paired?: boolean;
+  connected?: boolean;
+};
+
+export type NodeListResult = {
+  ts?: number;
+  nodes: NodeState[];
+};
+
+export type NodePairRequest = {
+  requestId: string;
+  nodeId?: string;
+  displayName?: string;
+  deviceFamily?: string;
+  modelIdentifier?: string;
+  createdAt?: number;
+  status?: string;
+  raw?: Record<string, unknown>;
+};
+
+export type NodePairListResult = {
+  ts?: number;
+  requests?: NodePairRequest[];
+  nodes?: NodeState[];
+  raw?: Record<string, unknown>;
+};
+
+export type ExecApprovalDecision = "allow-once" | "allow-always" | "deny";
+
+export type ExecApprovalRequest = {
+  approvalId: string;
+  agentId?: string;
+  sessionKey?: string;
+  host?: string;
+  cwd?: string;
+  rawCommand?: string;
+  argv?: string[];
+  status?: string;
+  createdAt?: number;
+  systemRunPlan?: Record<string, unknown>;
+  raw?: Record<string, unknown>;
+};
+
+export type ExecApprovalsSnapshot = {
+  path: string;
+  exists: boolean;
+  hash: string;
+  file: Record<string, unknown>;
+};
+
+export type LogsTailResult = {
+  file?: string;
+  cursor?: number;
+  size?: number;
+  lines?: string[];
+  truncated?: boolean;
+  reset?: boolean;
 };

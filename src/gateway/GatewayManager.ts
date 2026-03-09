@@ -5,9 +5,12 @@ import type {
   ChannelsStatusResult,
   ChatEvent,
   CronStatus,
+  ExecApprovalRequest,
   EventFrame,
   GatewayHelloOk,
+  NodePairRequest,
   PresenceEntry,
+  SessionsListResult,
 } from "./types";
 
 export type InstanceConfig = {
@@ -24,12 +27,14 @@ export type GatewayEventHandlers = {
   onAgentsList: (instanceId: string, result: AgentsListResult) => void;
   onChannelsStatus: (instanceId: string, result: ChannelsStatusResult) => void;
   onCronStatus: (instanceId: string, result: CronStatus) => void;
-  onSessionsList: (instanceId: string, sessions: unknown) => void;
+  onSessionsList: (instanceId: string, sessions: SessionsListResult) => void;
   onChatEvent: (instanceId: string, event: ChatEvent) => void;
   onAgentEvent: (instanceId: string, event: AgentEvent) => void;
   onPresence: (instanceId: string, entries: PresenceEntry[]) => void;
   onHealthEvent: (instanceId: string, payload: unknown) => void;
   onCronEvent: (instanceId: string, payload: unknown) => void;
+  onExecApprovalRequested: (instanceId: string, payload: ExecApprovalRequest) => void;
+  onNodePairUpdate: (instanceId: string, payload: NodePairRequest) => void;
 };
 
 /**
@@ -124,6 +129,19 @@ export class GatewayManager {
         break;
       case "cron":
         this.handlers.onCronEvent(instanceId, evt.payload);
+        break;
+      case "exec.approval.requested":
+        this.handlers.onExecApprovalRequested(
+          instanceId,
+          (evt.payload ?? {}) as ExecApprovalRequest,
+        );
+        break;
+      case "node.pair.requested":
+      case "node.pair.resolved":
+        this.handlers.onNodePairUpdate(
+          instanceId,
+          (evt.payload ?? {}) as NodePairRequest,
+        );
         break;
       case "tick":
         // Heartbeat - no-op for now
